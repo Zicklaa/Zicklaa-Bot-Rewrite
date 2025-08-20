@@ -34,8 +34,10 @@ with open(os.path.join(globalPfad, "utils/rm_grammar.peg"), "r", encoding="utf-8
 
 # -------------------- Reminder Model & Helper --------------------
 
+
 class Reminder:
     """Datenmodell für einen Reminder."""
+
     def __init__(self, message_id, channel_id, user_id, text, time, id=None, parent_id=None):
         self.message_id = message_id
         self.channel_id = channel_id
@@ -44,6 +46,7 @@ class Reminder:
         self.time = time
         self._id = id
         self._parent_id = parent_id
+
 
 def reminder_from_record(record):
     """Erstellt ein Reminder-Objekt aus einem DB-Record."""
@@ -57,12 +60,14 @@ def reminder_from_record(record):
         record[6],  # parent_id
     )
 
+
 def format_local(ts: float) -> str:
     """Formatiert einen Timestamp als lokale Zeit."""
     dt = datetime.fromtimestamp(ts, tz=tz.tzlocal())
     return dt.strftime("%d.%m.%Y %H:%M")
 
-def humanize_delta(seconds: int) -> str:
+
+def humanize_delta(Sekunden: int) -> str:
     """Wandelt Sekunden in eine menschenlesbare Zeitspanne um."""
     units = [
         ("Jahr", 365 * 86400),
@@ -73,15 +78,31 @@ def humanize_delta(seconds: int) -> str:
         ("Minute", 60),
         ("Sekunde", 1),
     ]
+
+    # Pluralformen explizit hinterlegen
+    plurals = {
+        "Jahr": "Jahre",
+        "Monat": "Monate",
+        "Woche": "Wochen",
+        "Tag": "Tage",
+        "Stunde": "Stunden",
+        "Minute": "Minuten",
+        "Sekunde": "Sekunden",
+    }
+
     parts = []
-    rem = max(0, int(seconds))
+    rem = max(0, int(Sekunden))
+
     for name, size in units:
         if rem >= size:
             qty, rem = divmod(rem, size)
-            parts.append(f"{qty} {name}{'' if qty == 1 else 'n'}")
+            word = name if qty == 1 else plurals[name]
+            parts.append(f"{qty} {word}")
         if len(parts) == 2:
             break
+
     return "in " + " ".join(parts) if parts else "bald"
+
 
 # -------------------- Cog-Klasse --------------------
 
@@ -109,43 +130,49 @@ class RemindMe(commands.Cog):
     @remindme.command(name="in", description="Erinnere mich in X Zeit")
     @app_commands.describe(
         amount="Zahl (z. B. 10)",
-        unit="Einheit (seconds/minutes/hours/days/weeks/months/years)",
+        unit="Einheit (Sekunden/Minuten/Stunden/Tage/Wochen/Monate/Jahre)",
         text="Woran soll ich dich erinnern?"
     )
     async def remind_in(
         self,
         interaction: discord.Interaction,
         amount: app_commands.Range[int, 1, 10_000_000],
-        unit: Literal["seconds", "minutes", "hours", "days", "weeks", "months", "years"],
+        unit: Literal["Sekunden", "Minuten", "Stunden", "Tage", "Wochen", "Monate", "Jahre"],
         text: Optional[str] = ""
     ):
         """Setzt einen Reminder nach einer Zeitspanne."""
-        seconds_map = {
-            "seconds": 1,
-            "minutes": 60,
-            "hours": 3600,
-            "days": 86400,
-            "weeks": 604800,
-            "months": 30 * 86400,   # vereinfachte Monat-/Jahr-Logik
-            "years": 365 * 86400,
+        Sekunden_map = {
+            "Sekunden": 1,
+            "Minuten": 60,
+            "Stunden": 3600,
+            "Tage": 86400,
+            "Wochen": 604800,
+            "Monate": 30 * 86400,   # vereinfachte Monat-/Jahr-Logik
+            "Jahre": 365 * 86400,
         }
-        remind_after = amount * seconds_map[unit]
+        remind_after = amount * Sekunden_map[unit]
         ts = round(time.time() + remind_after)
 
         # 1) Ephemere Bestätigung
         await interaction.response.send_message("✅ Reminder wird erstellt …", ephemeral=True)
 
         # 2) Öffentliche Bestätigungsnachricht (Ping + Text + Zeitpunkt + Relativ)
+        if text:
+            reason_text = f" an:\n**{text}**"
+        else:
+            reason_text = "."
+
         public_msg = await interaction.channel.send(
             f"📌 <@{interaction.user.id}> wird {humanize_delta(remind_after)} "
-            f"(am **{format_local(ts)}**) erinnert an:\n**{text or ''}**"
+            f"(am **{format_local(ts)}** errinert){reason_text}"
         )
 
         # 3) Reminder speichern – message_id = Bestätigungsnachricht
         reminder = Reminder(public_msg.id, interaction.channel_id,
                             interaction.user.id, text or "", ts)
         self.insert_reminder(reminder)
-        logger.info(f"Reminder erstellt (in): User={interaction.user.id}, Zeit={ts}, Text='{text}'")
+        logger.info(
+            f"Reminder erstellt (in): User={interaction.user.id}, Zeit={ts}, Text='{text}'")
 
     # -------- /remindme at --------
     @remindme.command(name="at", description="Erinnere mich zu Datum/Uhrzeit (natürliche Eingabe)")
@@ -166,7 +193,7 @@ class RemindMe(commands.Cog):
             if not parsed_time:
                 await interaction.response.send_message("❌ Konnte keine Zeitangabe erkennen.", ephemeral=True)
                 return
-            if "duration_seconds" in parsed_time:
+            if "duration_Sekunden" in parsed_time:
                 await interaction.response.send_message(
                     "❌ Für Zeitspannen nutze bitte `/remindme in …`.", ephemeral=True
                 )
@@ -199,16 +226,22 @@ class RemindMe(commands.Cog):
 
             # 2) Öffentliche Bestätigungsnachricht
             delta = int(ts - time.time())
+            if text:
+                reason_text = f" an:\n**{text}**"
+            else:
+                reason_text = "."
+
             public_msg = await interaction.channel.send(
                 f"📌 <@{interaction.user.id}> wird am **{format_local(ts)}** "
-                f"({humanize_delta(delta)}) erinnert:\n**{reason}**"
+                f"({humanize_delta(delta)}) erinnert{reason_text}"
             )
 
             # 3) Reminder speichern – message_id = Bestätigungsnachricht
             reminder = Reminder(
                 public_msg.id, interaction.channel_id, interaction.user.id, reason, ts)
             self.insert_reminder(reminder)
-            logger.info(f"Reminder erstellt (at): User={interaction.user.id}, Zeit={ts}, Text='{reason}'")
+            logger.info(
+                f"Reminder erstellt (at): User={interaction.user.id}, Zeit={ts}, Text='{reason}'")
 
         except Exception as e:
             logger.error(f"RemindMe /at Parse-Fehler: {e}")
@@ -307,7 +340,15 @@ class RemindMe(commands.Cog):
             except discord.NotFound:
                 pass
 
-            content = f"⏰ <@{reminder.user_id}> \nIch werde dich wissen lassen:\n**{reminder.text or ''}**"
+            if reminder.text:
+                content = reminder.text
+            else:
+                while True:
+                    content = self.json_model.make_sentence(
+                        max_overlap_ratio=0.67)
+                    if content:
+                        break
+            content = f"⏰ <@{reminder.user_id}> \nIch werde dich wissen lassen:\n**{content}**"
 
             if reminder._id != self.global_state.get("reminder_id"):
                 self.delete_reminder(reminder)
@@ -343,6 +384,7 @@ class RemindMe(commands.Cog):
             logger.error("RemindMe delete_reminder(): " + str(e))
 
 # -------------------- Cog-Setup --------------------
+
 
 async def setup(bot):
     """Fügt das RemindMe-Cog dem Bot hinzu."""

@@ -46,35 +46,47 @@ class Hivemind(commands.Cog):
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
             logger.error("Hivemind ERROR von %s: %s", interaction.user.name, e)
 
-    @app_commands.command(
-        name="hmm",
-        description="Generiert 5 zufällige Sätze (nur im Spam-Channel)."
-    )
+    @app_commands.command(name="hmm", description="Generiert 5 zufällige Sätze (nur im Spam-Channel).")
     async def hmm(self, interaction: discord.Interaction):
-        """Slash-Command: /hmm – Fünf Sätze, nur im Spam-Channel."""
         if interaction.channel_id != SPAM_CHANNEL_ID:
-            await interaction.response.send_message(
-                "Spam woanders, Moruk 🤷", ephemeral=True
-            )
-            logger.info("Hippomode ERROR von %s", interaction.user.name)
+            await interaction.response.send_message("Spam woanders, Moruk 🤷", ephemeral=True)
+            logger.info("Hippomode ERROR von %s (ID: %s)",
+                        interaction.user.name, interaction.user.id)
             return
 
         try:
-            lines = []
+            # Ephemeral „Denke…“ schicken (verhindert Timeout)
+            await interaction.response.defer(thinking=True, ephemeral=False)
+
             for _ in range(5):
                 while True:
                     satz = self.json_model.make_sentence(
                         max_overlap_ratio=ratio)
                     if satz:
-                        lines.append(satz)
+                        await interaction.channel.send(
+                            satz,
+                            allowed_mentions=discord.AllowedMentions.none()
+                        )
                         break
-            await interaction.response.send_message(
-                "\n".join(lines), allowed_mentions=am
-            )
-            logger.info("Hivemind für: %s", interaction.user.name)
+
+            # Den „denkt…“-Stub wieder weg
+            try:
+                await interaction.delete_original_response()
+            except Exception:
+                pass
+
+            logger.info("Hivemind /hmm von %s (ID: %s)",
+                        interaction.user.name, interaction.user.id)
+
         except Exception as e:
-            await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error("Hivemind ERROR von %s: %s", interaction.user.name, e)
+            # Falls das Löschen oben fehlschlug, wenigstens sauber abschließen
+            try:
+                await interaction.followup.send("Klappt nit lol 🤷", ephemeral=True)
+            except Exception:
+                pass
+            logger.error("Hivemind ERROR von %s (ID: %s): %s",
+                         interaction.user.name, interaction.user.id, e)
+
 
 # -------------------- Cog-Setup --------------------
 

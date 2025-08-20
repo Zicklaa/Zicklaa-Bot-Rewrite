@@ -36,11 +36,13 @@ user_last_command = {}
 
 # -------------------- Logging --------------------
 
+
 def create_log_file(path: str) -> logging.Logger:
     """Erstellt einen Logger mit rotierenden Logfiles."""
     logger = logging.getLogger("ZicklaaBot")
     logger.setLevel(logging.INFO)
-    handler = TimedRotatingFileHandler(path, when="midnight", interval=1, backupCount=5)
+    handler = TimedRotatingFileHandler(
+        path, when="midnight", interval=1, backupCount=5)
     formatter = logging.Formatter(
         "%(asctime)s::%(name)s::%(funcName)s::%(levelname)s - %(message)s"
     )
@@ -48,9 +50,12 @@ def create_log_file(path: str) -> logging.Logger:
     logger.addHandler(handler)
     return logger
 
-logger = create_log_file(os.path.join(globalPfad, "Old Logs/ZicklaaBotLog.log"))
+
+logger = create_log_file(os.path.join(
+    globalPfad, "Old Logs/ZicklaaBotLog.log"))
 
 # -------------------- Datenbank & Modelle --------------------
+
 
 def json_model():
     """Lädt das Markov-Modell aus einer JSON-Datei."""
@@ -62,10 +67,12 @@ def json_model():
 
 # -------------------- Bot-Klasse --------------------
 
+
 class ZicklaaBotRewrite(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents)
-        self.db = sqlite3.connect(os.path.join(globalPfad, "reminder-wishlist.db"))
+        self.db = sqlite3.connect(os.path.join(
+            globalPfad, "reminder-wishlist.db"))
         self.create_tables()
         self.json_model = json_model()
 
@@ -88,7 +95,8 @@ class ZicklaaBotRewrite(commands.Bot):
                 x[1] for x in cursor.execute("PRAGMA table_info(reminders)").fetchall()
             ]
             if "parent_id" not in reminder_columns:
-                cursor.execute("ALTER TABLE reminders ADD COLUMN parent_id INTEGER")
+                cursor.execute(
+                    "ALTER TABLE reminders ADD COLUMN parent_id INTEGER")
             # Wishlist
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS wishlist(
@@ -130,7 +138,13 @@ class ZicklaaBotRewrite(commands.Bot):
             logging.info("Extension geladen: %s", ext)
 
         # Guild-Sync (nur für Testserver)
-        GUILD_ID = 567050382920908801  # <-- eigene Server-ID hier eintragen
+        GUILD_ID = 567050382920908801
+        guild = discord.Object(id=GUILD_ID)
+        await self.tree.sync(guild=guild)
+        logging.info("Slash-Commands für GUILD %s synchronisiert.", GUILD_ID)
+
+        # Guild-Sync (nur für Benspalter)
+        GUILD_ID = 122739462210846721
         guild = discord.Object(id=GUILD_ID)
         await self.tree.sync(guild=guild)
         logging.info("Slash-Commands für GUILD %s synchronisiert.", GUILD_ID)
@@ -141,18 +155,20 @@ class ZicklaaBotRewrite(commands.Bot):
 
 # -------------------- Bot-Instanz --------------------
 
+
 bot = ZicklaaBotRewrite()
 
 # -------------------- Events & Checks --------------------
+
 
 @bot.event
 async def on_ready():
     """Wird ausgeführt, wenn der Bot bereit ist."""
     print("✅ Bot wurde erfolgreich gestartet!")
-    print(f"Eingeloggt als: {bot.user} (ID: {bot.user.id})")
     logger.info("=======================Startup=========================")
     remindme = bot.get_cog("RemindMe")
     await remindme.check_reminder()
+
 
 @bot.check
 async def is_on_cooldown(ctx):
@@ -165,6 +181,7 @@ async def is_on_cooldown(ctx):
         user_last_command[str(ctx.author)] = time.time()
         return True
     return False
+
 
 @bot.event
 async def on_message(message):
@@ -194,6 +211,7 @@ async def on_message(message):
                 await message.reply("Bitte!")
     await bot.process_commands(message)
 
+
 @bot.event
 async def on_command_error(ctx, error):
     """Fehlerbehandlung für Commands."""
@@ -219,6 +237,7 @@ async def on_command_error(ctx, error):
         )
 
 # -------------------- Main --------------------
+
 
 async def main():
     async with bot:

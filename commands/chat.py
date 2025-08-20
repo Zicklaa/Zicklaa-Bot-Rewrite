@@ -25,7 +25,7 @@ ALLOWED_MENTIONS = discord.AllowedMentions(
 )
 
 TTS_VOICES = ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
-MAX_TOKENS = 500  # immer maximale Länge für Antworten
+MAX_TOKENS = 500
 
 
 def _format_cost(total_tokens: int) -> str:
@@ -127,7 +127,7 @@ class Chat(commands.Cog):
 
     # ========= Slash Commands =========
 
-    @app_commands.command(name="chat", description="Frag die KI (immer gpt-4o, max Tokens).")
+    @app_commands.command(name="chat", description="Frag die Bot Bot.")
     @app_commands.describe(text="Deine Frage / dein Prompt")
     async def chat(self, interaction: discord.Interaction, text: str):
         if not await self._ensure_allowed(interaction):
@@ -148,7 +148,7 @@ class Chat(commands.Cog):
             await interaction.followup.send("Fehler bei der Anfrage. 🤷", ephemeral=True)
             logger.error(f"/chat Error ({interaction.user}): {e}")
 
-    @app_commands.command(name="hmchat", description="Antwortet im Hivemind-Stil (immer gpt-4o, max Tokens).")
+    @app_commands.command(name="hmchat", description="Antwortet im Hivemind-Stil.")
     async def hmchat(self, interaction: discord.Interaction):
         if not await self._ensure_allowed(interaction):
             return
