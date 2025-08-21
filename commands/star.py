@@ -17,9 +17,16 @@ POST_CHANNEL_ID = 981543834129428560  # Mainchannel
 
 THRESHOLD = 5  # Mindestanzahl an ⭐ für ein Post
 ADMIN_ID = 288413759117066241  # dein User für Sonderrechte
+
+# Erlaubte Dateiendungen für das Sternbrett (Bilder, Videos, Audio)
 EXT_LIST = [
-    "3g2", "3gp", "amv", "asf", "avi", "gifv", "m4p", "m4v",
-    "mov", "mp2", "mp4", "mpeg", "mpg", "webm",
+    # Bilder
+    "jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp", "heic", "svg",
+    # Videos
+    "mp4", "mov", "avi", "mkv", "flv", "wmv", "webm", "mpeg", "mpg",
+    "3gp", "3g2", "m4v", "ogv", "asf", "amv",
+    # Audio
+    "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus", "mid", "midi",
 ]
 SAVE_PATH = os.path.join(globalPfad, "LustigeBildchen/")
 
@@ -55,22 +62,42 @@ class Star(commands.Cog):
         # Attachments speichern / darstellen
         if message.attachments:
             att = message.attachments[0]
-            if any(ext in att.url for ext in EXT_LIST):
-                embed.add_field(
-                    name="Link zum Video:",
-                    value=f"[Video]({att.url})",
-                    inline=True,
-                )
-                file_ext = ".mp4"
-            else:
-                embed.set_image(url=str(att.url))
-                file_ext = ".png"
 
-            # Dateien auch lokal speichern
+            # Dateiendung extrahieren
+            _, ext = os.path.splitext(att.filename)
+            ext = ext.lower().lstrip(".")
+
+            if ext in EXT_LIST:
+                # Video → nur Link
+                if ext in ["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm",
+                            "mpeg", "mpg", "3gp", "3g2", "m4v", "ogv", "asf", "amv"]:
+                    embed.add_field(
+                        name="Link zum Video:",
+                        value=f"[Video]({att.url})",
+                        inline=True,
+                    )
+                # Audio → nur Link
+                elif ext in ["mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus", "mid", "midi"]:
+                    embed.add_field(
+                        name="Link zur Audiodatei:",
+                        value=f"[Audio]({att.url})",
+                        inline=True,
+                    )
+                # Bild → einbetten
+                else:
+                    embed.set_image(url=str(att.url))
+
+            # Dateien lokal speichern (mit Spoiler-Handling)
             for i, attachment in enumerate(message.attachments):
-                filename = os.path.join(
-                    SAVE_PATH, f"STERNBRETT_{message.id}_{i}{file_ext}"
-                )
+                _, orig_ext = os.path.splitext(attachment.filename)
+
+                # Spoiler-Handling
+                filename_base = f"STERNBRETT_{message.id}_{i}{orig_ext.lower()}"
+                if attachment.is_spoiler():
+                    filename_base = f"SPOILER_{filename_base}"
+
+                filename = os.path.join(SAVE_PATH, filename_base)
+
                 try:
                     await attachment.save(filename)
                 except Exception as e:
@@ -91,6 +118,7 @@ class Star(commands.Cog):
 
         return embed
 
+
     async def post_star(self, message: discord.Message):
         """Postet die Stern-Nachricht ins Sternbrett + DB-Eintrag."""
         embed = await self.build_star_embed(message)
@@ -108,7 +136,8 @@ class Star(commands.Cog):
             logger.error(f"Star Error beim DB Pushen: {e}")
 
         logger.info(
-            f"Star gepostet von {message.author} (ID: {message.author.id})")
+            f"Star gepostet von {message.author} (ID: {message.author.id})"
+        )
 
     # --- Event Listener ---
 
@@ -127,7 +156,8 @@ class Star(commands.Cog):
 
                 reactions = cache_msg.reactions
                 star_dict = {
-                    reaction.emoji: reaction.count for reaction in reactions}
+                    reaction.emoji: reaction.count for reaction in reactions
+                }
 
                 # Nur wenn genau unser Threshold erreicht ist
                 if star_dict.get("⭐", 0) == THRESHOLD:
@@ -147,20 +177,25 @@ class Star(commands.Cog):
 
     # --- Slash Commands ---
 
-    @app_commands.command(name="star", description="Postet manuell eine Nachricht ins Sternbrett (nur Admin).")
+    @app_commands.command(
+        name="star",
+        description="Postet manuell eine Nachricht ins Sternbrett (nur Admin)."
+    )
     async def star(self, interaction: discord.Interaction, link: str):
         """Manuelles Posten ins Sternbrett (nur Admin)."""
         try:
             if interaction.user.id != ADMIN_ID:
                 await interaction.response.send_message("Das ist VERBOTEN!!", ephemeral=True)
                 logger.info(
-                    f"/star von Nicht-Admin {interaction.user} (ID: {interaction.user.id}) blockiert")
+                    f"/star von Nicht-Admin {interaction.user} (ID: {interaction.user.id}) blockiert"
+                )
                 return
 
             if not link:
                 await interaction.response.send_message("Du musst einen Link angeben!", ephemeral=True)
                 logger.info(
-                    f"/star ohne Link von {interaction.user} (ID: {interaction.user.id})")
+                    f"/star ohne Link von {interaction.user} (ID: {interaction.user.id})"
+                )
                 return
 
             # Link parsen
@@ -171,7 +206,8 @@ class Star(commands.Cog):
             except Exception:
                 await interaction.response.send_message("Ungültiger Link.", ephemeral=True)
                 logger.info(
-                    f"/star ungültiger Link von {interaction.user} (ID: {interaction.user.id})")
+                    f"/star ungültiger Link von {interaction.user} (ID: {interaction.user.id})"
+                )
                 return
 
             channel = self.bot.get_channel(channel_id)
@@ -186,18 +222,21 @@ class Star(commands.Cog):
             if msg_id in posted_stars:
                 await interaction.response.send_message("Die Nachricht ist schon im Sternbrett.", ephemeral=True)
                 logger.info(
-                    f"/star bereits gepostet von {interaction.user} (ID: {interaction.user.id})")
+                    f"/star bereits gepostet von {interaction.user} (ID: {interaction.user.id})"
+                )
                 return
 
             await self.post_star(message)
             await interaction.response.send_message("Star erfolgreich gepostet ✅", ephemeral=True)
             logger.info(
-                f"/star erfolgreich von {interaction.user} (ID: {interaction.user.id})")
+                f"/star erfolgreich von {interaction.user} (ID: {interaction.user.id})"
+            )
 
         except Exception as e:
             await interaction.response.send_message("Fehler beim Posten 🤷", ephemeral=True)
             logger.error(
-                f"/star Fehler von {interaction.user} (ID: {interaction.user.id}): {e}")
+                f"/star Fehler von {interaction.user} (ID: {interaction.user.id}): {e}"
+            )
 
 # -------------------- Cog-Setup --------------------
 

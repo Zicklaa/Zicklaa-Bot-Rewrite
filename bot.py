@@ -9,6 +9,7 @@ import time
 import traceback
 import json
 import sqlite3
+import pathlib
 
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
@@ -128,7 +129,6 @@ class ZicklaaBotRewrite(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Lädt alle Cogs und synchronisiert Slash-Commands."""
-        import pathlib
         commands_dir = pathlib.Path(__file__).parent / "commands"
         for file in commands_dir.glob("*.py"):
             if file.name.startswith("_"):
@@ -137,17 +137,12 @@ class ZicklaaBotRewrite(commands.Bot):
             await self.load_extension(ext)
             logging.info("Extension geladen: %s", ext)
 
-        # Guild-Sync (nur für Testserver)
-        GUILD_ID = 567050382920908801
-        guild = discord.Object(id=GUILD_ID)
-        await self.tree.sync(guild=guild)
-        logging.info("Slash-Commands für GUILD %s synchronisiert.", GUILD_ID)
-
-        # Guild-Sync (nur für Benspalter)
-        GUILD_ID = 122739462210846721
-        guild = discord.Object(id=GUILD_ID)
-        await self.tree.sync(guild=guild)
-        logging.info("Slash-Commands für GUILD %s synchronisiert.", GUILD_ID)
+        # Guild-Sync für spezifische Server
+        for guild_id in (567050382920908801, 122739462210846721):
+            guild = discord.Object(id=guild_id)
+            await self.tree.sync(guild=guild)
+            logging.info(
+                "Slash-Commands für GUILD %s synchronisiert.", guild_id)
 
         # Global-Sync (alle Server)
         await self.tree.sync()
@@ -186,30 +181,40 @@ async def is_on_cooldown(ctx):
 @bot.event
 async def on_message(message):
     """Reagiert auf bestimmte Nachrichten mit zufälliger Wahrscheinlichkeit."""
-    if message.author.id != 1407707429176873093:
-        if random.random() < float(os.environ["SECRET_PROBABILITY"]):
-            content = message.content.lower()
-            if "crazy" in content:
-                await message.reply(content.replace("crazy", "***normal***"))
-            elif "kult" in content:
-                await message.reply("***KEIN KULT***")
-            elif content == "hi":
-                await message.reply("Hallo!")
-            elif content == "lol":
-                await message.reply("xD")
-            elif content == "xd":
-                await message.reply("lol")
-            elif content == "uff":
-                await message.reply("uff")
-            elif content == "gumo":
-                await message.reply("GuMo")
-            elif "brazy" in content:
-                await message.reply(content.replace("brazy", "***banal***"))
-            elif "halt echt" in content:
-                await message.reply(content.replace("halt echt", "***alt hecht***"))
-            elif re.search(r"\bdanke\b", content) is not None:
-                await message.reply("Bitte!")
-    await bot.process_commands(message)
+    if message.author.id == 1407707429176873093:
+        return
+
+    if random.random() <= float(os.environ["SECRET_PROBABILITY"]):
+        await bot.process_commands(message)
+        return
+
+    content = message.content.lower()
+
+    triggers: dict[str, callable] = {
+        "crazy": lambda c: c.replace("crazy", "***normal***"),
+        "kult": lambda _: "***KEIN KULT***",
+        "hi": lambda _: "Hallo!",
+        "lol": lambda _: "xD",
+        "xd": lambda _: "lol",
+        "uff": lambda _: "uff",
+        "gumo": lambda _: "GuMo",
+        "brazy": lambda c: c.replace("brazy", "***banal***"),
+        "halt echt": lambda c: c.replace("halt echt", "***alt hecht***"),
+    }
+
+    response = None
+    for trigger, func in triggers.items():
+        if trigger in content:
+            response = func(content)
+            break
+    else:
+        if re.search(r"\bdanke\b", content) is not None:
+            response = "Bitte!"
+
+    if response:
+        await message.reply(response)
+        logger.debug("Auto-response '%s' auf Nachricht von %s",
+                     response, message.author)
 
 
 @bot.event
