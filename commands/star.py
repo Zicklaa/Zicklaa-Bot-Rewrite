@@ -10,7 +10,7 @@ from dateutil import tz
 # -------------------- Konfiguration & Logger --------------------
 
 globalPfad = os.environ["globalPfad"]
-logger = logging.getLogger("ZicklaaBot.Star")
+logger = logging.getLogger("ZicklaaBotRewrite.Star")
 
 POST_CHANNEL_ID = 981543834129428560  # Mainchannel
 # POST_CHANNEL_ID = 567411189336768532  # Testchannel

@@ -5,7 +5,7 @@ from discord import app_commands
 
 # -------------------- Logger & Konfiguration --------------------
 
-logger = logging.getLogger("ZicklaaBot.Hivemind")
+logger = logging.getLogger("ZicklaaBotRewrite.Hivemind")
 
 # AllowedMentions: Keine Pings für User, Rollen, everyone/here oder Replies
 am = discord.AllowedMentions(
@@ -16,7 +16,7 @@ am = discord.AllowedMentions(
 )
 
 # Satz-Generierungs-Parameter
-ratio = 0.7
+ratio = 0.75
 SPAM_CHANNEL_ID = 528742785935998979
 
 # -------------------- Cog-Klasse --------------------

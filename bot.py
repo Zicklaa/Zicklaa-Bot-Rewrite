@@ -40,7 +40,7 @@ user_last_command = {}
 
 def create_log_file(path: str) -> logging.Logger:
     """Erstellt einen Logger mit rotierenden Logfiles."""
-    logger = logging.getLogger("ZicklaaBot")
+    logger = logging.getLogger("ZicklaaBotRewrite")
     logger.setLevel(logging.INFO)
     handler = TimedRotatingFileHandler(
         path, when="midnight", interval=1, backupCount=5)
@@ -53,7 +53,7 @@ def create_log_file(path: str) -> logging.Logger:
 
 
 logger = create_log_file(os.path.join(
-    globalPfad, "Old Logs/ZicklaaBotLog.log"))
+    globalPfad, "Old Logs/ZicklaaBotRewriteLog.log"))
 
 # -------------------- Datenbank & Modelle --------------------
 
@@ -137,16 +137,19 @@ class ZicklaaBotRewrite(commands.Bot):
             await self.load_extension(ext)
             logging.info("Extension geladen: %s", ext)
 
-        # Guild-Sync für spezifische Server
-        for guild_id in (567050382920908801, 122739462210846721):
-            guild = discord.Object(id=guild_id)
-            await self.tree.sync(guild=guild)
-            logging.info(
-                "Slash-Commands für GUILD %s synchronisiert.", guild_id)
+        # 1) Nur auf erlaubten Guilds registrieren
+        ALLOWED_GUILDS = [122739462210846721, 567050382920908801]
+        for gid in ALLOWED_GUILDS:
+            guild = discord.Object(id=int(gid))
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            logger.info(
+                "Slash-Commands für GUILD %s synchronisiert (%d cmds).", gid, len(synced))
 
-        # Global-Sync (alle Server)
-        await self.tree.sync()
-        logging.info("Slash-Commands global synchronisiert.")
+        # 2) Globale Commands beim API-Server entfernen
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync(guild=None)
+        logger.info("Slash-Commands GLOBAL gelöscht.")
 
 # -------------------- Bot-Instanz --------------------
 
@@ -159,7 +162,6 @@ bot = ZicklaaBotRewrite()
 @bot.event
 async def on_ready():
     """Wird ausgeführt, wenn der Bot bereit ist."""
-    print("✅ Bot wurde erfolgreich gestartet!")
     logger.info("=======================Startup=========================")
     remindme = bot.get_cog("RemindMe")
     await remindme.check_reminder()
@@ -184,7 +186,7 @@ async def on_message(message):
     if message.author.id == 1407707429176873093:
         return
 
-    if random.random() <= float(os.environ["SECRET_PROBABILITY"]):
+    if random.random() >= float(os.environ["SECRET_PROBABILITY"]):
         await bot.process_commands(message)
         return
 
@@ -193,7 +195,7 @@ async def on_message(message):
     triggers: dict[str, callable] = {
         "crazy": lambda c: c.replace("crazy", "***normal***"),
         "kult": lambda _: "***KEIN KULT***",
-        "hi": lambda _: "Hallo!",
+        "hallo": lambda _: "Hallo!",
         "lol": lambda _: "xD",
         "xd": lambda _: "lol",
         "uff": lambda _: "uff",

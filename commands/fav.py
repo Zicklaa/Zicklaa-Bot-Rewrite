@@ -8,7 +8,7 @@ from dateutil import tz
 from discord.ext import commands
 from discord.raw_models import RawReactionActionEvent
 
-logger = logging.getLogger("ZicklaaBot.Fav")
+logger = logging.getLogger("ZicklaaBotRewrite.Fav")
 
 
 class Fav(commands.Cog):

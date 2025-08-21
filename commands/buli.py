@@ -9,7 +9,7 @@ from discord import app_commands
 
 # -------------------- Logger & Konfiguration --------------------
 
-logger = logging.getLogger("ZicklaaBot.Buli")
+logger = logging.getLogger("ZicklaaBotRewrite.Buli")
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
 WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")

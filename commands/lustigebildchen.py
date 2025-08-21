@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-logger = logging.getLogger("ZicklaaBot.LustigeBildchen")
+logger = logging.getLogger("ZicklaaBotRewrite.LustigeBildchen")
 
 # Pfad zu den Bildern
 globalPfad = os.environ["globalPfad"]

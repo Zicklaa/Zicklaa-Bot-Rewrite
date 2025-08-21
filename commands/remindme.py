@@ -25,7 +25,7 @@ from utils.parser import RemindmeParser
 
 # -------------------- Logger & Konfiguration --------------------
 
-logger = logging.getLogger("ZicklaaBot.RemindMe")
+logger = logging.getLogger("ZicklaaBotRewrite.RemindMe")
 
 # Lade rm_grammar.peg für den Parser des absoluten Datums
 globalPfad = os.environ["globalPfad"]

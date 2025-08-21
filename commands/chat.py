@@ -12,7 +12,7 @@ import requests
 import fal_client
 from openai import OpenAI  # offizielles OpenAI SDK (v1)
 
-logger = logging.getLogger("ZicklaaBot.Chat")
+logger = logging.getLogger("ZicklaaBotRewrite.Chat")
 
 # ---- Konfiguration ----
 ALLOWED_CHANNELS = {528742785935998979, 567411189336768532}
