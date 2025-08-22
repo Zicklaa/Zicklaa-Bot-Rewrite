@@ -192,21 +192,21 @@ async def on_message(message):
 
     content = message.content.lower()
 
-    triggers: dict[str, callable] = {
-        "crazy": lambda c: c.replace("crazy", "***normal***"),
-        "kult": lambda _: "***KEIN KULT***",
-        "hallo": lambda _: "Hallo!",
-        "lol": lambda _: "xD",
-        "xd": lambda _: "lol",
-        "uff": lambda _: "uff",
-        "gumo": lambda _: "GuMo",
-        "brazy": lambda c: c.replace("brazy", "***banal***"),
-        "halt echt": lambda c: c.replace("halt echt", "***alt hecht***"),
+    triggers: dict[re.Pattern, callable] = {
+        re.compile(r"\bcrazy\b"): lambda c: c.replace("crazy", "***normal***"),
+        re.compile(r"\bkult\b"): lambda _: "***KEIN KULT***",
+        re.compile(r"\bhallo\b"): lambda _: "Hallo!",
+        re.compile(r"\blol\b"): lambda _: "xD",
+        re.compile(r"\bxd\b"): lambda _: "lol",
+        re.compile(r"\buff\b"): lambda _: "uff",
+        re.compile(r"\bgumo\b"): lambda _: "GuMo",
+        re.compile(r"\bbrazy\b"): lambda c: c.replace("brazy", "***banal***"),
+        re.compile(r"\bhalt echt\b"): lambda c: c.replace("halt echt", "***alt hecht***"),
     }
 
     response = None
-    for trigger, func in triggers.items():
-        if trigger in content:
+    for pattern, func in triggers.items():
+        if pattern.search(content) is not None:
             response = func(content)
             break
     else:
