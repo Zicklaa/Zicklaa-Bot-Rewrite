@@ -138,9 +138,14 @@ dmypy.json
 cython_debug/
 
 config.py
+gambling.py
 log.txt
 reminder-wishlist.db
 
+*.log.20*
+
+Old Logs/
+unusedCommands/
 pyvenv.cfg
 bin/
 lib64
