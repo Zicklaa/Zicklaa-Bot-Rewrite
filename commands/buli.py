@@ -367,7 +367,7 @@ def build_embed(matchday: int, fixtures: list[dict], date_range: str) -> discord
     description = "\n".join(lines).strip()
 
     embed = discord.Embed(
-        title=f"🇩🇪 Bundesliga – Spieltag {matchday}",
+        title=f"🇩🇪 Männerfußball Bundesliga – Spieltag {matchday}",
         description=description or "Keine Spiele gefunden.",
         color=color,
     )
