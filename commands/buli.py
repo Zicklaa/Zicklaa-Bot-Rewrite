@@ -127,8 +127,8 @@ class Buli(commands.Cog):
 
             session = get_session(api_token)
 
-            # 1) Cache initial füllen (1 API-Call) und Bounds bestimmen
-            await self._ensure_cache(session)
+            # 1) IMMER frische Daten holen (1 API-Call) und Cache damit überschreiben
+            await self._refresh_full_cache(session)
 
             md_min, md_max = self._md_min or 1, self._md_max or 34
             start_md = self._next_matchday or md_min
@@ -288,6 +288,40 @@ class Buli(commands.Cog):
             logger.exception(f"Update Embed Error: {e}")
 
     # -------------------- Cache/Init --------------------
+
+    async def _refresh_full_cache(self, session: requests.Session):
+        """Lädt ALLE Spiele der Saison neu und überschreibt den Cache (immer 1 API-Call)."""
+        data = fd_get(session, f"/competitions/{COMP}/matches", params=None)
+        matches = data.get("matches", [])
+        if not matches:
+            raise RuntimeError("Keine Spiele für laufende Saison gefunden.")
+
+        # md_min/md_max
+        mds = [m.get("matchday") for m in matches if isinstance(m.get("matchday"), int)]
+        self._md_min, self._md_max = (min(mds), max(mds)) if mds else (1, 34)
+
+        # matchday -> list[matches], sortiert
+        grouped: dict[int, list[dict]] = defaultdict(list)
+        for m in matches:
+            md = m.get("matchday")
+            if isinstance(md, int):
+                grouped[md].append(m)
+
+        self._md_cache.clear()
+        self._md_date_range.clear()
+        for md, lst in grouped.items():
+            lst.sort(key=lambda x: to_dt(x["utcDate"]))
+            self._md_cache[md] = lst
+            self._md_date_range[md] = format_date_range(lst) if lst else ""
+
+        # „nächsten/aktuellen“ Spieltag bestimmen
+        self._next_matchday = determine_next_matchday_from_all(matches)
+        self._cache_ready = True
+
+        logger.info(
+            "Full-Refresh: Cache neu geladen (%d Spieltage), Bounds=%s-%s, next=%s",
+            len(self._md_cache), self._md_min, self._md_max, self._next_matchday,
+        )
 
     async def _ensure_cache(self, session: requests.Session):
         """Lädt einmalig alle Spiele der Saison und füllt den Matchday-Cache (1 API-Call)."""

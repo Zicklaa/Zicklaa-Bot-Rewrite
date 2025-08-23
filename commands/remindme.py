@@ -1,13 +1,18 @@
 # commands/remindme.py
-# Hybrid-Version:
-# - /remindme in <amount> <unit> [text]  → strukturiert (Zahl + Einheit)
-# - /remindme at <input> [text]          → Datum/Uhrzeit wird mit deinem Parser (rm_grammar.peg) geparst
-# - /remindme list                       → eigene Reminder anzeigen
-#
-# Verhalten:
-# - Slash-Aufruf: ephemere Kurzbestätigung
-# - Öffentliche Bestätigungs-Nachricht vom Bot mit Ping, Text und Zeitpunkt (auf diese wird beim Erinnern geantwortet)
-# - Beim Erinnern: Reply auf die Bestätigungs-Nachricht + Ping des Users
+# -*- coding: utf-8 -*-
+"""
+Hybrid-RemindMe:
+- /remindme in <amount> <unit> [text]   → Zeitspanne (Zahl + Einheit)
+- /remindme at <input> [text]           → Absolutes Datum (Parser: rm_grammar.peg)
+- /remindme list                        → Eigene Reminder anzeigen (ephemer, blätterbar)
+
+Verhalten:
+- Slash: ephemere Kurzbestätigung
+- Öffentliche Bestätigungs-Nachricht (Ping + Zeitpunkt + Text)
+- Beim Erinnern: Reply auf die Bestätigungs-Nachricht + Ping
+"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -17,13 +22,16 @@ from datetime import datetime
 from typing import Optional, Literal
 
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 from dateutil import tz
 
 from utils.parser import RemindmeParser
 
-# -------------------- Logger & Konfiguration --------------------
+
+# ============================================================================
+# Logger & Konfiguration
+# ============================================================================
 
 logger = logging.getLogger("ZicklaaBotRewrite.RemindMe")
 
@@ -32,8 +40,10 @@ globalPfad = os.environ["globalPfad"]
 with open(os.path.join(globalPfad, "utils/rm_grammar.peg"), "r", encoding="utf-8") as _f:
     GRAMMAR = _f.read()
 
-# -------------------- Reminder Model & Helper --------------------
 
+# ============================================================================
+# Datenmodell & Helper
+# ============================================================================
 
 class Reminder:
     """Datenmodell für einen Reminder."""
@@ -62,24 +72,22 @@ def reminder_from_record(record):
 
 
 def format_local(ts: float) -> str:
-    """Formatiert einen Timestamp als lokale Zeit."""
+    """Formatiert einen Unix-Timestamp als lokale Zeit (z. B. 31.12.2025 23:59)."""
     dt = datetime.fromtimestamp(ts, tz=tz.tzlocal())
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
 def humanize_delta(Sekunden: int) -> str:
-    """Wandelt Sekunden in eine menschenlesbare Zeitspanne um."""
+    """Wandelt Sekunden in eine kurze menschenlesbare Zeitspanne (max. 2 Einheiten)."""
     units = [
-        ("Jahr", 365 * 86400),
-        ("Monat", 30 * 86400),
-        ("Woche", 7 * 86400),
-        ("Tag", 86400),
-        ("Stunde", 3600),
-        ("Minute", 60),
-        ("Sekunde", 1),
+        ("Jahr",   365 * 86400),
+        ("Monat",   30 * 86400),
+        ("Woche",    7 * 86400),
+        ("Tag",          86400),
+        ("Stunde",        3600),
+        ("Minute",          60),
+        ("Sekunde",          1),
     ]
-
-    # Pluralformen explizit hinterlegen
     plurals = {
         "Jahr": "Jahre",
         "Monat": "Monate",
@@ -92,19 +100,18 @@ def humanize_delta(Sekunden: int) -> str:
 
     parts = []
     rem = max(0, int(Sekunden))
-
     for name, size in units:
         if rem >= size:
             qty, rem = divmod(rem, size)
-            word = name if qty == 1 else plurals[name]
-            parts.append(f"{qty} {word}")
+            parts.append(f"{qty} {name if qty == 1 else plurals[name]}")
         if len(parts) == 2:
             break
-
     return "in " + " ".join(parts) if parts else "bald"
 
-# ---------- Helper & View für die Reminder-Liste ----------
 
+# ============================================================================
+# Reminder-Liste: Helper & View (ephemer, paginiert, Cache im View)
+# ============================================================================
 
 def _truncate(s: str, max_len: int) -> str:
     s = s.strip()
@@ -116,14 +123,12 @@ def _truncate(s: str, max_len: int) -> str:
 def _build_pages_from_records(records: list[tuple], *, line_max: int = 4096 - 300) -> list[str]:
     """
     Baut Seiten (Embed.description) aus DB-Records. Achtet auf Discord-Limits.
-    - records: DB-Zeilen. Erwartet: [id, user_id, text, reminder_time, channel, message_id, parent_id]
-    - line_max: weiche Obergrenze je Seite (kleiner als 4096, da Footer/Title usw.)
+    Erwartete Record-Struktur: [id, user_id, text, reminder_time, channel, message_id, parent_id]
     """
     pages: list[str] = []
     page_lines: list[str] = []
 
-    # Introzeile pro Seite
-    def start_page():
+    def start_page() -> list[str]:
         return ["**Deine anstehenden Reminder**"]
 
     page_lines = start_page()
@@ -137,7 +142,6 @@ def _build_pages_from_records(records: list[tuple], *, line_max: int = 4096 - 30
         rel = humanize_delta(int(ts - now_ts))
         line = f"• **{when}** ({rel}) — {_truncate(text, 180)}"
 
-        # Falls diese Zeile die Seiten-Limit überschreitet → Seite flushen
         if cur_len + len(line) + 1 > line_max:
             pages.append("\n".join(page_lines))
             page_lines = start_page()
@@ -146,7 +150,6 @@ def _build_pages_from_records(records: list[tuple], *, line_max: int = 4096 - 30
         page_lines.append(line)
         cur_len += len(line) + 1
 
-    # letzte Seite anhängen
     if len(page_lines) > 0:
         pages.append("\n".join(page_lines))
 
@@ -154,7 +157,7 @@ def _build_pages_from_records(records: list[tuple], *, line_max: int = 4096 - 30
 
 
 class ReminderListView(discord.ui.View):
-    """Ephemere, paginierte View – cached alle Reminder in-memory."""
+    """Ephemere, paginierte View – cached alle Reminder in-memory (keine DB bei Navigation)."""
 
     def __init__(self, *, user: discord.abc.User, records: list[tuple]):
         super().__init__(timeout=300)
@@ -165,21 +168,18 @@ class ReminderListView(discord.ui.View):
         self.total = len(self.pages)
         self._update_buttons()
 
+    # ----- UI intern -----
+
     def _update_buttons(self):
-        # Buttons anhand der Seitenposition deaktivieren
         self.prev_btn.disabled = self.page <= 0
         self.next_btn.disabled = self.page >= (self.total - 1)
 
     def _make_embed(self) -> discord.Embed:
-        # Farbe je nach Status: grün wenn bald, grau wenn alles weit weg
         color = discord.Color.blurple()
         try:
             soon = any((float(r[3]) - time.time())
                        < 3600 for r in self.records)
-            if soon:
-                color = discord.Color.green()
-            else:
-                color = discord.Color.greyple()
+            color = discord.Color.green() if soon else discord.Color.greyple()
         except Exception:
             pass
 
@@ -190,8 +190,8 @@ class ReminderListView(discord.ui.View):
         )
         embed.set_author(
             name=self.user.display_name,
-            icon_url=self.user.display_avatar.url if hasattr(
-                self.user, "display_avatar") else discord.Embed.Empty,
+            icon_url=getattr(self.user, "display_avatar", None).url
+            if hasattr(self.user, "display_avatar") else None,
         )
         embed.set_footer(
             text=f"Seite {self.page + 1}/{self.total} • {len(self.records)} Reminder insgesamt")
@@ -205,6 +205,8 @@ class ReminderListView(discord.ui.View):
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+
+    # ----- Buttons -----
 
     @discord.ui.button(label="⬅️ Zurück", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -222,11 +224,7 @@ class ReminderListView(discord.ui.View):
 
     @discord.ui.button(label="🔄 Neu laden", style=discord.ButtonStyle.primary)
     async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """
-        'Soft-Refresh' aus dem Cache (keine DB). Aktualisiert nur das Relative (z. B. „in 5 Minuten“),
-        indem die Seiten neu gerendert werden.
-        """
-        # Rebuild der Seiten mit aktuellem now_ts
+        """Soft-Refresh (nur Relativzeiten aktualisieren; kein DB-Reload)."""
         self.pages = _build_pages_from_records(self.records)
         self.total = len(self.pages)
         self.page = min(self.page, self.total - 1)
@@ -235,23 +233,23 @@ class ReminderListView(discord.ui.View):
 
     @discord.ui.button(label="🗑️ Schließen", style=discord.ButtonStyle.danger)
     async def close_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Ephemere Nachricht „löschen“ → setze View auf None & Hinweis
         await interaction.response.edit_message(content="(geschlossen)", embed=None, view=None)
 
 
-# -------------------- Cog-Klasse --------------------
+# ============================================================================
+# Cog-Klasse
+# ============================================================================
 
 class RemindMe(commands.Cog):
     """
     Slash-Reminders:
     /remindme in <amount> <unit> [text]
-    /remindme at <input> [text]        (input wird mit rm_grammar.peg geparst)
+    /remindme at <input> [text]
     /remindme list
     """
 
     remindme = app_commands.Group(
-        name="remindme", description="Erinnerungen setzen"
-    )
+        name="remindme", description="Erinnerungen setzen")
 
     def __init__(self, bot, db, json_model):
         self.bot = bot
@@ -261,7 +259,10 @@ class RemindMe(commands.Cog):
         self.global_state = {}
         self.parser = RemindmeParser(GRAMMAR)
 
-    # -------- /remindme in --------
+    # ----------------------------------------------------------------------
+    # /remindme in — Zeitspanne
+    # ----------------------------------------------------------------------
+
     @remindme.command(name="in", description="Erinnere mich in X Zeit")
     @app_commands.describe(
         amount="Zahl (z. B. 10)",
@@ -277,13 +278,8 @@ class RemindMe(commands.Cog):
     ):
         """Setzt einen Reminder nach einer Zeitspanne."""
         Sekunden_map = {
-            "Sekunden": 1,
-            "Minuten": 60,
-            "Stunden": 3600,
-            "Tage": 86400,
-            "Wochen": 604800,
-            "Monate": 30 * 86400,   # vereinfachte Monat-/Jahr-Logik
-            "Jahre": 365 * 86400,
+            "Sekunden": 1, "Minuten": 60, "Stunden": 3600,
+            "Tage": 86400, "Wochen": 604800, "Monate": 30 * 86400, "Jahre": 365 * 86400,
         }
         remind_after = amount * Sekunden_map[unit]
         ts = round(time.time() + remind_after)
@@ -291,25 +287,24 @@ class RemindMe(commands.Cog):
         # 1) Ephemere Bestätigung
         await interaction.response.send_message("✅ Reminder wird erstellt …", ephemeral=True)
 
-        # 2) Öffentliche Bestätigungsnachricht (Ping + Text + Zeitpunkt + Relativ)
-        if text:
-            reason_text = f" an:\n**{text}**"
-        else:
-            reason_text = "."
-
+        # 2) Öffentliche Bestätigungsnachricht
+        reason_text = f" an:\n**{text}**" if text else "."
         public_msg = await interaction.channel.send(
             f"📌 <@{interaction.user.id}> wird {humanize_delta(remind_after)} "
             f"(am **{format_local(ts)}** errinert){reason_text}"
         )
 
-        # 3) Reminder speichern – message_id = Bestätigungsnachricht
+        # 3) Reminder speichern
         reminder = Reminder(public_msg.id, interaction.channel_id,
                             interaction.user.id, text or "", ts)
         self.insert_reminder(reminder)
-        logger.info(
-            f"Reminder erstellt (in): User={interaction.user.id}, Zeit={ts}, Text='{text}'")
+        logger.info("Reminder erstellt (in): User=%s, Zeit=%s, Text='%s'",
+                    interaction.user.id, ts, text)
 
-    # -------- /remindme at --------
+    # ----------------------------------------------------------------------
+    # /remindme at — Absoluter Zeitpunkt
+    # ----------------------------------------------------------------------
+
     @remindme.command(name="at", description="Erinnere mich zu Datum/Uhrzeit (natürliche Eingabe)")
     @app_commands.describe(
         input="Datum/Uhrzeit, z. B. '2025-09-01 15:30', '01.09.2025 15:30', '15:30', '01-09', etc.",
@@ -329,12 +324,10 @@ class RemindMe(commands.Cog):
                 await interaction.response.send_message("❌ Konnte keine Zeitangabe erkennen.", ephemeral=True)
                 return
             if "duration_Sekunden" in parsed_time:
-                await interaction.response.send_message(
-                    "❌ Für Zeitspannen nutze bitte `/remindme in …`.", ephemeral=True
-                )
+                await interaction.response.send_message("❌ Für Zeitspannen nutze bitte `/remindme in …`.", ephemeral=True)
                 return
 
-            # Absolutes Datum/Uhrzeit zusammenbauen (fehlende Teile aus 'jetzt' übernehmen)
+            # Fehlende Felder mit 'jetzt' auffüllen
             now = datetime.now(tz=tz.tzlocal())
             year = parsed_time.get("year", now.year)
             month = parsed_time.get("month", now.month)
@@ -346,7 +339,7 @@ class RemindMe(commands.Cog):
             ts = datetime(year=year, month=month, day=day, hour=hour,
                           minute=minute, second=second, tzinfo=tz.tzlocal()).timestamp()
 
-            # Bei Vergangenheit ggf. auf morgen gleicher Zeit verschieben (<= 12h alt)
+            # Vergangenheits-Fallback: wenn <12h alt, auf morgen verschieben
             now_ts = time.time()
             if ts < now_ts and (now_ts - ts) < 12 * 3600:
                 ts += 86400
@@ -361,36 +354,38 @@ class RemindMe(commands.Cog):
 
             # 2) Öffentliche Bestätigungsnachricht
             delta = int(ts - time.time())
-            if text:
-                reason_text = f" an:\n**{text}**"
-            else:
-                reason_text = "."
-
+            reason_text = f" an:\n**{text}**" if text else "."
             public_msg = await interaction.channel.send(
                 f"📌 <@{interaction.user.id}> wird am **{format_local(ts)}** "
                 f"({humanize_delta(delta)}) erinnert{reason_text}"
             )
 
-            # 3) Reminder speichern – message_id = Bestätigungsnachricht
+            # 3) Reminder speichern
             reminder = Reminder(
                 public_msg.id, interaction.channel_id, interaction.user.id, reason, ts)
             self.insert_reminder(reminder)
-            logger.info(
-                f"Reminder erstellt (at): User={interaction.user.id}, Zeit={ts}, Text='{reason}'")
+            logger.info("Reminder erstellt (at): User=%s, Zeit=%s, Text='%s'",
+                        interaction.user.id, ts, reason)
 
         except Exception as e:
-            logger.error(f"RemindMe /at Parse-Fehler: {e}")
+            logger.error("RemindMe /at Parse-Fehler: %s", e)
             await interaction.response.send_message("❌ Ungültiges Eingabeformat.", ephemeral=True)
 
-    # -------- /remindme list --------
+    # ----------------------------------------------------------------------
+    # /remindme list — Übersicht
+    # ----------------------------------------------------------------------
+
     @remindme.command(name="list", description="Zeige deine anstehenden Reminder")
     async def remind_list(self, interaction: discord.Interaction):
-        """Zeigt alle anstehenden Reminder des Users."""
+        """Zeigt alle anstehenden Reminder des Users (ephemer, paginiert)."""
         await self.get_all_reminders(interaction)
 
-    # ---------- Background Loop (von bot.on_ready gestartet) ----------
+    # ============================================================================
+    # Background-Task (von bot.on_ready gestartet)
+    # ============================================================================
+
     async def check_reminder(self):
-        """Hintergrund-Task: prüft regelmäßig, ob ein Reminder fällig ist."""
+        """Prüft regelmäßig, ob ein Reminder fällig ist, und sendet ihn dann."""
         try:
             while True:
                 self.cursor.execute(
@@ -402,12 +397,14 @@ class RemindMe(commands.Cog):
                         await self.send_reminder(reminder)
                 await asyncio.sleep(10)
         except Exception as e:
-            logger.error(f"RemindMe check_reminder(): {e}")
+            logger.error("RemindMe check_reminder(): %s", e)
 
-    # ---------- DB/Utility ----------
+    # ============================================================================
+    # DB / Utility
+    # ============================================================================
 
     async def get_all_reminders(self, interaction: discord.Interaction):
-        """Zeigt dem User eine ephemere, paginierte Liste aller eigenen Reminder (ohne weitere DB-Calls beim Blättern)."""
+        """Ephemere, paginierte Liste aller eigenen Reminder (Navigation aus Cache, kein DB-Reload)."""
         try:
             user_id = interaction.user.id
             records = self.cursor.execute(
@@ -416,10 +413,7 @@ class RemindMe(commands.Cog):
             ).fetchall()
 
             if not records:
-                await interaction.response.send_message(
-                    "Du hast aktuell **keine** anstehenden Reminder. 🎉",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message("Du hast aktuell **keine** anstehenden Reminder. 🎉", ephemeral=True)
                 return
 
             view = ReminderListView(user=interaction.user, records=records)
@@ -439,27 +433,22 @@ class RemindMe(commands.Cog):
         try:
             sql = """INSERT INTO reminders (user_id, reminder_text, reminder_time, channel, message_id, parent_id)
                      VALUES (?, ?, ?, ?, ?, ?)"""
-            val = (
-                reminder.user_id,
-                reminder.text,
-                reminder.time,
-                reminder.channel_id,
-                reminder.message_id,
-                reminder._parent_id,
-            )
+            val = (reminder.user_id, reminder.text, reminder.time,
+                   reminder.channel_id, reminder.message_id, reminder._parent_id)
             self.cursor.execute(sql, val)
             self.db.commit()
+
             self.cursor.execute(
                 "SELECT id FROM reminders WHERE user_id=? AND reminder_text=? AND reminder_time=? AND message_id=?",
                 (reminder.user_id, reminder.text,
                  reminder.time, reminder.message_id),
             )
             new_id = self.cursor.fetchall()[0][0]
-            logger.info(f"Neuer Reminder in die DB gepusht: {new_id}")
+            logger.info("Neuer Reminder in die DB gepusht: %s", new_id)
             reminder._id = new_id
             return reminder
         except Exception as e:
-            logger.error("RemindMe insert_reminder(): " + str(e))
+            logger.error("RemindMe insert_reminder(): %s", e)
 
     async def send_reminder(self, reminder: Reminder):
         """Sendet einen fälligen Reminder und löscht ihn danach."""
@@ -473,7 +462,6 @@ class RemindMe(commands.Cog):
                 self.delete_reminder(reminder)
                 return
 
-            # Auf die öffentliche Bestätigungsnachricht antworten
             parent_msg = None
             try:
                 parent_msg = await channel.fetch_message(reminder.message_id)
@@ -488,29 +476,30 @@ class RemindMe(commands.Cog):
                         max_overlap_ratio=0.67)
                     if content:
                         break
+
             content = f"⏰ <@{reminder.user_id}> \nIch werde dich wissen lassen:\n**{content}**"
 
             if reminder._id != self.global_state.get("reminder_id"):
                 self.delete_reminder(reminder)
                 self.global_state["reminder_id"] = reminder._id
-                logger.info(f"Auf Reminder geantwortet: {reminder._id}")
+                logger.info("Auf Reminder geantwortet: %s", reminder._id)
+
                 if parent_msg:
                     await parent_msg.reply(content, mention_author=True)
                 else:
                     await channel.send(content)
 
         except Exception as e:
-            logger.error(f"RemindMe send_reminder(): {e}")
+            logger.error("RemindMe send_reminder(): %s", e)
 
     async def check_reminder_exists(self, reminder: Reminder):
         """Prüft, ob ein Reminder noch in der Datenbank existiert."""
         try:
             res = self.cursor.execute(
-                "SELECT * FROM reminders where id=?", (reminder._id,)
-            ).fetchone()
+                "SELECT * FROM reminders where id=?", (reminder._id,)).fetchone()
             return bool(res)
         except Exception as e:
-            logger.error("RemindMe check_reminder_exists(): " + str(e))
+            logger.error("RemindMe check_reminder_exists(): %s", e)
             return False
 
     def delete_reminder(self, reminder: Reminder):
@@ -519,12 +508,14 @@ class RemindMe(commands.Cog):
             self.cursor.execute(
                 "DELETE FROM reminders WHERE id=?", (reminder._id,))
             self.db.commit()
-            logger.info(f"Reminder gelöscht: {reminder._id}")
+            logger.info("Reminder gelöscht: %s", reminder._id)
         except Exception as e:
-            logger.error("RemindMe delete_reminder(): " + str(e))
+            logger.error("RemindMe delete_reminder(): %s", e)
 
-# -------------------- Cog-Setup --------------------
 
+# ============================================================================
+# Cog-Setup
+# ============================================================================
 
 async def setup(bot):
     """Fügt das RemindMe-Cog dem Bot hinzu."""
