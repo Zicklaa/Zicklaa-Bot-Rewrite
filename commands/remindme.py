@@ -103,6 +103,141 @@ def humanize_delta(Sekunden: int) -> str:
 
     return "in " + " ".join(parts) if parts else "bald"
 
+# ---------- Helper & View für die Reminder-Liste ----------
+
+
+def _truncate(s: str, max_len: int) -> str:
+    s = s.strip()
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1].rstrip() + "…"
+
+
+def _build_pages_from_records(records: list[tuple], *, line_max: int = 4096 - 300) -> list[str]:
+    """
+    Baut Seiten (Embed.description) aus DB-Records. Achtet auf Discord-Limits.
+    - records: DB-Zeilen. Erwartet: [id, user_id, text, reminder_time, channel, message_id, parent_id]
+    - line_max: weiche Obergrenze je Seite (kleiner als 4096, da Footer/Title usw.)
+    """
+    pages: list[str] = []
+    page_lines: list[str] = []
+
+    # Introzeile pro Seite
+    def start_page():
+        return ["**Deine anstehenden Reminder**"]
+
+    page_lines = start_page()
+    cur_len = sum(len(x) + 1 for x in page_lines)  # + newline
+
+    now_ts = time.time()
+    for r in records:
+        text = str(r[2] or "").replace("\n", " ")
+        ts = float(r[3])
+        when = format_local(ts)
+        rel = humanize_delta(int(ts - now_ts))
+        line = f"• **{when}** ({rel}) — {_truncate(text, 180)}"
+
+        # Falls diese Zeile die Seiten-Limit überschreitet → Seite flushen
+        if cur_len + len(line) + 1 > line_max:
+            pages.append("\n".join(page_lines))
+            page_lines = start_page()
+            cur_len = sum(len(x) + 1 for x in page_lines)
+
+        page_lines.append(line)
+        cur_len += len(line) + 1
+
+    # letzte Seite anhängen
+    if len(page_lines) > 0:
+        pages.append("\n".join(page_lines))
+
+    return pages or ["(leer)"]
+
+
+class ReminderListView(discord.ui.View):
+    """Ephemere, paginierte View – cached alle Reminder in-memory."""
+
+    def __init__(self, *, user: discord.abc.User, records: list[tuple]):
+        super().__init__(timeout=300)
+        self.user = user
+        self.records = records
+        self.pages = _build_pages_from_records(records)
+        self.page = 0
+        self.total = len(self.pages)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        # Buttons anhand der Seitenposition deaktivieren
+        self.prev_btn.disabled = self.page <= 0
+        self.next_btn.disabled = self.page >= (self.total - 1)
+
+    def _make_embed(self) -> discord.Embed:
+        # Farbe je nach Status: grün wenn bald, grau wenn alles weit weg
+        color = discord.Color.blurple()
+        try:
+            soon = any((float(r[3]) - time.time())
+                       < 3600 for r in self.records)
+            if soon:
+                color = discord.Color.green()
+            else:
+                color = discord.Color.greyple()
+        except Exception:
+            pass
+
+        embed = discord.Embed(
+            title="⏰ Deine Reminder",
+            description=self.pages[self.page],
+            color=color,
+        )
+        embed.set_author(
+            name=self.user.display_name,
+            icon_url=self.user.display_avatar.url if hasattr(
+                self.user, "display_avatar") else discord.Embed.Empty,
+        )
+        embed.set_footer(
+            text=f"Seite {self.page + 1}/{self.total} • {len(self.records)} Reminder insgesamt")
+        embed.timestamp = discord.utils.utcnow()
+        return embed
+
+    async def send_initial(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            embed=self._make_embed(),
+            view=self,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @discord.ui.button(label="⬅️ Zurück", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+            self._update_buttons()
+        await interaction.response.edit_message(embed=self._make_embed(), view=self)
+
+    @discord.ui.button(label="Weiter ➡️", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page < self.total - 1:
+            self.page += 1
+            self._update_buttons()
+        await interaction.response.edit_message(embed=self._make_embed(), view=self)
+
+    @discord.ui.button(label="🔄 Neu laden", style=discord.ButtonStyle.primary)
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """
+        'Soft-Refresh' aus dem Cache (keine DB). Aktualisiert nur das Relative (z. B. „in 5 Minuten“),
+        indem die Seiten neu gerendert werden.
+        """
+        # Rebuild der Seiten mit aktuellem now_ts
+        self.pages = _build_pages_from_records(self.records)
+        self.total = len(self.pages)
+        self.page = min(self.page, self.total - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._make_embed(), view=self)
+
+    @discord.ui.button(label="🗑️ Schließen", style=discord.ButtonStyle.danger)
+    async def close_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Ephemere Nachricht „löschen“ → setze View auf None & Hinweis
+        await interaction.response.edit_message(content="(geschlossen)", embed=None, view=None)
+
 
 # -------------------- Cog-Klasse --------------------
 
@@ -270,29 +405,34 @@ class RemindMe(commands.Cog):
             logger.error(f"RemindMe check_reminder(): {e}")
 
     # ---------- DB/Utility ----------
+
     async def get_all_reminders(self, interaction: discord.Interaction):
-        """Sendet dem User eine Liste aller eigenen Reminder."""
+        """Zeigt dem User eine ephemere, paginierte Liste aller eigenen Reminder (ohne weitere DB-Calls beim Blättern)."""
         try:
             user_id = interaction.user.id
-            all_reminders = self.cursor.execute(
+            records = self.cursor.execute(
                 "SELECT * FROM reminders WHERE user_id=? ORDER BY reminder_time ASC",
                 (user_id,),
             ).fetchall()
-            if not all_reminders:
-                await interaction.response.send_message("Du hast keine Reminder, du Megabrain", ephemeral=True)
+
+            if not records:
+                await interaction.response.send_message(
+                    "Du hast aktuell **keine** anstehenden Reminder. 🎉",
+                    ephemeral=True,
+                )
                 return
 
-            lines = ["Ich werde dich demnächst wissen lassen:"]
-            now_ts = time.time()
-            for r in all_reminders:
-                ts = r[3]
-                lines.append(
-                    f"• **{format_local(ts)}** ({humanize_delta(int(ts - now_ts))}) – **{r[2]}**")
-            await interaction.response.send_message("\n".join(lines), ephemeral=True)
-            logger.info(f"Reminder-Liste gesendet an User={user_id}")
+            view = ReminderListView(user=interaction.user, records=records)
+            await view.send_initial(interaction)
+            logger.info(
+                "Reminder-Liste gesendet an User=%s (Einträge=%d)", user_id, len(records))
 
         except Exception as e:
-            logger.error("RemindMe get_all_reminders(): " + str(e))
+            logger.exception("RemindMe get_all_reminders(): %s", e)
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ Konnte deine Reminder nicht laden.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Konnte deine Reminder nicht laden.", ephemeral=True)
 
     def insert_reminder(self, reminder: Reminder):
         """Fügt einen Reminder in die Datenbank ein."""
