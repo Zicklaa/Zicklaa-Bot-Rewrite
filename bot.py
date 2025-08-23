@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 import discord
 from discord.ext import commands
+from utils.logging_helper import log_event
 
 import markovify
 
@@ -135,7 +136,13 @@ class ZicklaaBotRewrite(commands.Bot):
                 continue
             ext = f"commands.{file.stem}"
             await self.load_extension(ext)
-            logging.info("Extension geladen: %s", ext)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "extension_loaded",
+                extension=ext,
+            )
 
         # 1) Nur auf erlaubten Guilds registrieren
         ALLOWED_GUILDS = [122739462210846721, 567050382920908801]
@@ -143,13 +150,24 @@ class ZicklaaBotRewrite(commands.Bot):
             guild = discord.Object(id=int(gid))
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
-            logger.info(
-                "Slash-Commands für GUILD %s synchronisiert (%d cmds).", gid, len(synced))
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "slash_commands_synced",
+                guild=gid,
+                command_count=len(synced),
+            )
 
         # 2) Globale Commands beim API-Server entfernen
         self.tree.clear_commands(guild=None)
         await self.tree.sync(guild=None)
-        logger.info("Slash-Commands GLOBAL gelöscht.")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "slash_commands_cleared_global",
+        )
 
 # -------------------- Bot-Instanz --------------------
 
@@ -162,7 +180,12 @@ bot = ZicklaaBotRewrite()
 @bot.event
 async def on_ready():
     """Wird ausgeführt, wenn der Bot bereit ist."""
-    logger.info("=======================Startup=========================")
+    log_event(
+        logger,
+        logging.INFO,
+        "Bot",
+        "startup_complete",
+    )
     remindme = bot.get_cog("RemindMe")
     await remindme.check_reminder()
 
@@ -205,18 +228,29 @@ async def on_message(message):
     }
 
     response = None
+    trigger_used = None
     for trigger, func in triggers.items():
         if trigger in content:
             response = func(content)
+            trigger_used = trigger
             break
     else:
         if re.search(r"\bdanke\b", content) is not None:
             response = "Bitte!"
+            trigger_used = "danke"
 
     if response:
         await message.reply(response)
-        logger.debug("Auto-response '%s' auf Nachricht von %s",
-                     response, message.author)
+        log_event(
+            logger,
+            logging.DEBUG,
+            "Bot",
+            "auto_response",
+            message.author,
+            message.author.id,
+            trigger=trigger_used,
+            response=response,
+        )
 
 
 @bot.event
@@ -235,12 +269,32 @@ async def on_command_error(ctx, error):
         return
 
     if isinstance(error, commands.errors.CheckFailure):
-        logger.error(f"User {str(ctx.author)} triggered: {error}")
+        log_event(
+            logger,
+            logging.WARNING,
+            "Bot",
+            "command_check_failed",
+            ctx.author,
+            ctx.author.id,
+            command=ctx.command.qualified_name if ctx.command else None,
+            error=error,
+        )
         return
     else:
         print(f"Ignoring exception in command {ctx.command}:", file=sys.stderr)
         traceback.print_exception(
             type(error), error, error.__traceback__, file=sys.stderr
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "Bot",
+            "command_error",
+            ctx.author,
+            ctx.author.id,
+            command=ctx.command.qualified_name if ctx.command else None,
+            error=error,
+            exc_info=True,
         )
 
 # -------------------- Main --------------------

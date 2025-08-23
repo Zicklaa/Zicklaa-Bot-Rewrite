@@ -4,6 +4,8 @@ from discord import app_commands
 from discord.ext import commands
 from pathlib import Path
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Admin")
 
 # Nur dieser User darf load/unload/reload/sync ausführen
@@ -71,9 +73,15 @@ class Admin(commands.Cog):
             await interaction.response.send_message(
                 "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
             )
-            logger.warning(
-                "Unbefugter Load-Versuch von %s (ID: %s)",
-                interaction.user, interaction.user.id
+            log_event(
+                logger,
+                logging.WARNING,
+                self.__class__.__name__,
+                "Unauthorized load",
+                interaction.user,
+                interaction.user.id,
+                command="/load",
+                extension=extension,
             )
             return
 
@@ -83,21 +91,49 @@ class Admin(commands.Cog):
                 await interaction.response.send_message(
                     f"ℹ️ `{ext}` ist bereits geladen.", ephemeral=True
                 )
-                logger.info("Load übersprungen (bereits geladen): %s (von %s, ID: %s)",
-                            ext, interaction.user, interaction.user.id)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Load skipped",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/load",
+                    extension=ext,
+                )
                 return
 
             await self.bot.load_extension(ext)
             await interaction.response.send_message(
                 f"✅ Cog `{ext}` wurde geladen.", ephemeral=True
             )
-            logger.info("Cog geladen: %s (von %s, ID: %s)", ext, interaction.user, interaction.user.id)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Cog loaded",
+                interaction.user,
+                interaction.user.id,
+                command="/load",
+                extension=ext,
+            )
 
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Fehler beim Laden von `{ext}`: {e}", ephemeral=True
             )
-            logger.error("Fehler beim Laden von %s: %s", ext, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Load failed",
+                interaction.user,
+                interaction.user.id,
+                command="/load",
+                extension=ext,
+                error=e,
+                exc_info=True,
+            )
 
     # ---------------- /unload ----------------
     @app_commands.command(name="unload", description="Entlädt ein Cog (nur für Bot-Owner).")
@@ -108,9 +144,15 @@ class Admin(commands.Cog):
             await interaction.response.send_message(
                 "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
             )
-            logger.warning(
-                "Unbefugter Unload-Versuch von %s (ID: %s)",
-                interaction.user, interaction.user.id
+            log_event(
+                logger,
+                logging.WARNING,
+                self.__class__.__name__,
+                "Unauthorized unload",
+                interaction.user,
+                interaction.user.id,
+                command="/unload",
+                extension=extension,
             )
             return
 
@@ -120,21 +162,49 @@ class Admin(commands.Cog):
                 await interaction.response.send_message(
                     f"ℹ️ `{ext}` ist nicht geladen.", ephemeral=True
                 )
-                logger.info("Unload übersprungen (nicht geladen): %s (von %s, ID: %s)",
-                            ext, interaction.user, interaction.user.id)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Unload skipped",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/unload",
+                    extension=ext,
+                )
                 return
 
             await self.bot.unload_extension(ext)
             await interaction.response.send_message(
                 f"✅ Cog `{ext}` wurde entladen.", ephemeral=True
             )
-            logger.info("Cog entladen: %s (von %s, ID: %s)", ext, interaction.user, interaction.user.id)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Cog unloaded",
+                interaction.user,
+                interaction.user.id,
+                command="/unload",
+                extension=ext,
+            )
 
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Fehler beim Entladen von `{ext}`: {e}", ephemeral=True
             )
-            logger.error("Fehler beim Entladen von %s: %s", ext, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Unload failed",
+                interaction.user,
+                interaction.user.id,
+                command="/unload",
+                extension=ext,
+                error=e,
+                exc_info=True,
+            )
 
     # ---------------- /reload ----------------
     @app_commands.command(name="reload", description="Lädt ein Cog neu (nur für Bot-Owner).")
@@ -145,9 +215,15 @@ class Admin(commands.Cog):
             await interaction.response.send_message(
                 "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
             )
-            logger.warning(
-                "Unbefugter Reload-Versuch von %s (ID: %s)",
-                interaction.user, interaction.user.id
+            log_event(
+                logger,
+                logging.WARNING,
+                self.__class__.__name__,
+                "Unauthorized reload",
+                interaction.user,
+                interaction.user.id,
+                command="/reload",
+                extension=extension,
             )
             return
 
@@ -162,13 +238,33 @@ class Admin(commands.Cog):
                 msg = f"✅ Cog `{ext}` wurde **neu geladen**."
 
             await interaction.response.send_message(msg, ephemeral=True)
-            logger.info("Reload: %s (von %s, ID: %s)", ext, interaction.user, interaction.user.id)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Cog reloaded",
+                interaction.user,
+                interaction.user.id,
+                command="/reload",
+                extension=ext,
+            )
 
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Fehler beim Reload von `{ext}`: {e}", ephemeral=True
             )
-            logger.error("Fehler beim Reload von %s: %s", ext, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Reload failed",
+                interaction.user,
+                interaction.user.id,
+                command="/reload",
+                extension=ext,
+                error=e,
+                exc_info=True,
+            )
 
     # ---------------- /sync ----------------
     @app_commands.command(
@@ -178,9 +274,14 @@ class Admin(commands.Cog):
     async def sync(self, interaction: discord.Interaction):
         if interaction.user.id != OWNER_ID:
             await interaction.response.send_message("❌ Nicht erlaubt.", ephemeral=True)
-            logger.warning(
-                "Unbefugter Sync-Versuch von %s (ID: %s)",
-                interaction.user, interaction.user.id
+            log_event(
+                logger,
+                logging.WARNING,
+                self.__class__.__name__,
+                "Unauthorized sync",
+                interaction.user,
+                interaction.user.id,
+                command="/sync",
             )
             return
 
@@ -191,12 +292,30 @@ class Admin(commands.Cog):
                 # Wichtig: globale (in-memory) Commands in diese Guild kopieren
                 self.bot.tree.copy_global_to(guild=guild)
                 synced = await self.bot.tree.sync(guild=guild)
-                logger.info("Slash-Commands für GUILD %s synchronisiert (%d cmds).", gid, len(synced))
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Guild synced",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/sync",
+                    guild_id=gid,
+                    commands=len(synced),
+                )
 
             # 2) Globale Commands beim API-Server entfernen
             self.bot.tree.clear_commands(guild=None)
             await self.bot.tree.sync(guild=None)
-            logger.info("Slash-Commands GLOBAL gelöscht.")
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Global commands cleared",
+                interaction.user,
+                interaction.user.id,
+                command="/sync",
+            )
             
             await interaction.response.send_message(
                 f"✅ Slash-Commands für {len(GUILD_IDS)} Guild(s) synchronisiert.",
@@ -204,7 +323,17 @@ class Admin(commands.Cog):
             )
         except Exception as e:
             await interaction.response.send_message("❌ Fehler beim Synchronisieren.", ephemeral=True)
-            logger.error("Fehler beim Sync: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Sync failed",
+                interaction.user,
+                interaction.user.id,
+                command="/sync",
+                error=e,
+                exc_info=True,
+            )
 
 
 async def setup(bot: commands.Bot):

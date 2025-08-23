@@ -12,6 +12,8 @@ import requests
 import fal_client
 from openai import OpenAI  # offizielles OpenAI SDK (v1)
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Chat")
 
 # ---- Konfiguration ----
@@ -57,8 +59,15 @@ class Chat(commands.Cog):
         if interaction.channel_id in ALLOWED_CHANNELS:
             return True
         await interaction.response.send_message("Spam woanders, Moruk 🤷", ephemeral=True)
-        logger.info(
-            f"Command in falschem Channel: {interaction.user} @ {interaction.channel_id}")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "Wrong channel",
+            interaction.user,
+            interaction.user.id,
+            channel_id=interaction.channel_id,
+        )
         return False
 
     async def _send_chat_embed(
@@ -123,7 +132,16 @@ class Chat(commands.Cog):
             file=discord.File(BytesIO(resp.content), filename),
             allowed_mentions=ALLOWED_MENTIONS,
         )
-        logger.info(f"Bild gesendet ({quality}, nsfw={nsfw})")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "Image generated",
+            interaction.user,
+            interaction.user.id,
+            quality=quality,
+            nsfw=nsfw,
+        )
 
     # ========= Slash Commands =========
 
@@ -133,7 +151,15 @@ class Chat(commands.Cog):
         if not await self._ensure_allowed(interaction):
             return
         await interaction.response.defer(thinking=True)
-        logger.info(f"/chat von {interaction.user}")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "Chat command",
+            interaction.user,
+            interaction.user.id,
+            command="/chat",
+        )
 
         try:
             completion = self.oai.chat.completions.create(
@@ -146,7 +172,17 @@ class Chat(commands.Cog):
             await self._send_chat_embed(interaction, "Antwort von ChatGPT", text, answer, tokens)
         except Exception as e:
             await interaction.followup.send("Fehler bei der Anfrage. 🤷", ephemeral=True)
-            logger.error(f"/chat Error ({interaction.user}): {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Chat command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/chat",
+                error=e,
+                exc_info=True,
+            )
 
     @app_commands.command(name="hmchat", description="Antwortet im Hivemind-Stil.")
     async def hmchat(self, interaction: discord.Interaction):
@@ -183,7 +219,17 @@ class Chat(commands.Cog):
             await self._send_chat_embed(interaction, "Antwort (Hivemind)", base_text, answer, tokens)
         except Exception as e:
             await interaction.followup.send("Fehler bei HMChat. 🤷", ephemeral=True)
-            logger.error(f"/hmchat Error: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "HMChat failed",
+                interaction.user,
+                interaction.user.id,
+                command="/hmchat",
+                error=e,
+                exc_info=True,
+            )
 
     # ==== Image Commands ====
 
@@ -228,7 +274,16 @@ class Chat(commands.Cog):
         if not await self._ensure_allowed(interaction):
             return
         await interaction.response.defer(thinking=True)
-        logger.info(f"/tts von {interaction.user}: voice={voice}")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "TTS command",
+            interaction.user,
+            interaction.user.id,
+            command="/tts",
+            voice=voice,
+        )
 
         try:
             completion = self.oai.audio.speech.create(
@@ -241,10 +296,30 @@ class Chat(commands.Cog):
             await interaction.followup.send(
                 file=discord.File(mp3_file, "tts.mp3"), allowed_mentions=ALLOWED_MENTIONS
             )
-            logger.info("TTS gesendet.")
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "TTS sent",
+                interaction.user,
+                interaction.user.id,
+                command="/tts",
+                voice=voice,
+            )
         except Exception as e:
             await interaction.followup.send("Fehler bei TTS. 🤷", ephemeral=True)
-            logger.error(f"/tts Error: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "TTS failed",
+                interaction.user,
+                interaction.user.id,
+                command="/tts",
+                voice=voice,
+                error=e,
+                exc_info=True,
+            )
 
 
 async def setup(bot):

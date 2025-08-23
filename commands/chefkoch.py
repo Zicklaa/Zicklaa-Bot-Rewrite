@@ -12,6 +12,7 @@ import logging
 import random
 
 import discord
+from utils.logging_helper import log_event
 from discord import app_commands
 from discord.ext import commands
 
@@ -49,7 +50,15 @@ class Chefkoch(commands.Cog):
                     "⚠️ Bitte gib mindestens **eine** Zutat/ein Stichwort an.",
                     ephemeral=True,
                 )
-                logger.info("Chefkoch suchen: leere Eingabe von %s (%s)", interaction.user, interaction.user.id)
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Empty search input",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/chefkoch suchen",
+                )
                 return
 
             if len(query) > MAX_QUERY_LEN:
@@ -57,7 +66,16 @@ class Chefkoch(commands.Cog):
                     f"⚠️ Deine Eingabe ist zu lang (>{MAX_QUERY_LEN} Zeichen). Kürze sie bitte.",
                     ephemeral=True,
                 )
-                logger.info("Chefkoch suchen: zu lang (%d Zeichen) von %s", len(query), interaction.user)
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Search query too long",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/chefkoch suchen",
+                    length=len(query),
+                )
                 return
 
             await interaction.response.defer(thinking=True)  # falls API mal langsamer ist
@@ -67,22 +85,60 @@ class Chefkoch(commands.Cog):
 
             if not results:
                 await interaction.followup.send("😕 Keine Rezepte gefunden. Versuch andere Begriffe.")
-                logger.info("Chefkoch suchen: 0 Treffer für '%s' von %s", query, interaction.user)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "No recipes found",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/chefkoch suchen",
+                    query=query,
+                )
                 return
 
             url = random.choice(results)._url
-            
+
             if not url:
                 await interaction.followup.send("😕 Unerwartetes Ergebnisformat. Probier es später nochmal.")
-                logger.warning("Chefkoch suchen: Ergebnis ohne URL für '%s' von %s", query, interaction.user)
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Search result missing URL",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/chefkoch suchen",
+                    query=query,
+                )
                 return
-            
+
             await interaction.followup.send(f"{url}\n**SCHMEEECKT :DDD**")
-            logger.info("Chefkoch suchen: '%s' → %s (User: %s)", query, url, interaction.user)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Recipe link sent",
+                interaction.user,
+                interaction.user.id,
+                command="/chefkoch suchen",
+                query=query,
+                url=url,
+            )
 
         except Exception as e:
-            logger.exception("Chefkoch suchen: Fehler bei '%s' von %s: %s", zutaten, interaction.user, e)
-            # Fallback-Antwort je nach Response-Status
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Search failed",
+                interaction.user,
+                interaction.user.id,
+                command="/chefkoch suchen",
+                query=zutaten,
+                error=e,
+                exc_info=True,
+            )
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
             else:
@@ -95,19 +151,46 @@ class Chefkoch(commands.Cog):
         try:
             await interaction.response.defer(thinking=True)
 
-            recipe: Recipe = Search().recipeOfTheDay() 
+            recipe: Recipe = Search().recipeOfTheDay()
             url = recipe._url
 
             if not url:
                 await interaction.followup.send("😕 Konnte das Rezept des Tages nicht abrufen.")
-                logger.warning("Chefkoch rotd: Ergebnis ohne ID (User: %s)", interaction.user)
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Recipe of the day missing URL",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/chefkoch rotd",
+                )
                 return
 
             await interaction.followup.send(f"**Recipe of the Day** 🍽️\n{url}\n**SCHMEEECKT :DDD**")
-            logger.info("Chefkoch rotd: %s (User: %s)", url, interaction.user)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Recipe of the day sent",
+                interaction.user,
+                interaction.user.id,
+                command="/chefkoch rotd",
+                url=url,
+            )
 
         except Exception as e:
-            logger.exception("Chefkoch rotd: Fehler bei %s: %s", interaction.user, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Recipe of the day failed",
+                interaction.user,
+                interaction.user.id,
+                command="/chefkoch rotd",
+                error=e,
+                exc_info=True,
+            )
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
             else:

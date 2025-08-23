@@ -14,6 +14,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 # Erwartete Konfiguration:
 globalPfad = os.environ["globalPfad"]
 KINDERMOERDER_CAPTION = "RAUL CRUISEHAUSEN KINDERMÖRDER"
@@ -64,7 +66,16 @@ class Kindermoerder(commands.Cog):
         if not gif_path.exists():
             msg = f"Datei nicht gefunden: `{gif_path}` – bitte Pfad prüfen."
             await interaction.followup.send(msg)
-            logger.error("GIF fehlt – %s | von %s", gif_path, interaction.user)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "GIF missing",
+                interaction.user,
+                interaction.user.id,
+                command="/kindermoerder",
+                path=gif_path,
+            )
             return
 
         try:
@@ -72,18 +83,34 @@ class Kindermoerder(commands.Cog):
             caption = _safe_caption()
 
             sent = await interaction.followup.send(content=caption, file=file)
-            logger.info(
-                "GIF gesendet | Guild=%s | Channel=%s | User=%s | File=%s",
-                getattr(interaction.guild, "name", None),
-                getattr(interaction.channel, "id", None),
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "GIF sent",
                 interaction.user,
-                gif_path,
+                interaction.user.id,
+                command="/kindermoerder",
+                guild=getattr(interaction.guild, "name", None),
+                channel=getattr(interaction.channel, "id", None),
+                file=gif_path,
             )
         except Exception as e:
             await interaction.followup.send(
                 "Da hakt was. Prüf bitte den GIF-Pfad und meine Sende-Rechte."
             )
-            logger.exception("Fehler beim Senden des GIFs: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "GIF send failed",
+                interaction.user,
+                interaction.user.id,
+                command="/kindermoerder",
+                file=gif_path,
+                error=e,
+                exc_info=True,
+            )
 
     # ---- Slash: /raul ---------------------------------------------------
     @app_commands.command(
@@ -98,15 +125,30 @@ class Kindermoerder(commands.Cog):
         )
         try:
             await interaction.followup.send(url)
-            logger.info(
-                "Raul-URL gesendet | Guild=%s | Channel=%s | User=%s",
-                getattr(interaction.guild, "name", None),
-                getattr(interaction.channel, "id", None),
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Raul URL sent",
                 interaction.user,
+                interaction.user.id,
+                command="/raul",
+                guild=getattr(interaction.guild, "name", None),
+                channel=getattr(interaction.channel, "id", None),
             )
         except Exception as e:
             await interaction.followup.send("Senden fehlgeschlagen.")
-            logger.exception("Fehler beim Senden der Raul-URL: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Raul URL failed",
+                interaction.user,
+                interaction.user.id,
+                command="/raul",
+                error=e,
+                exc_info=True,
+            )
 
 
 # -------- Extension Setup (discord.py 2.x) -------------------------------
