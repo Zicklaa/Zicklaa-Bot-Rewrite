@@ -25,8 +25,9 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.logging_helper import log_event
 
-log = logging.getLogger("ZicklaaBotRewrite.Wiki")
+logger = logging.getLogger("ZicklaaBotRewrite.Wiki")
 
 # -------------------- Konfiguration --------------------
 
@@ -193,7 +194,16 @@ class SearchResultsView(discord.ui.View):
             embed = build_summary_embed(data, self.lang)
             await interaction.response.edit_message(embed=embed, view=self)
         except Exception as e:
-            log.exception("Wiki Select error: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.cog.__class__.__name__,
+                "select_failed",
+                interaction.user,
+                interaction.user.id,
+                error=e,
+                exc_info=True,
+            )
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Konnte den Artikel nicht laden.", ephemeral=True)
             else:
@@ -209,7 +219,16 @@ class SearchResultsView(discord.ui.View):
             embed = build_summary_embed(fresh, self.lang)
             await interaction.response.edit_message(embed=embed, view=self)
         except Exception as e:
-            log.exception("Wiki Refresh error: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.cog.__class__.__name__,
+                "refresh_failed",
+                interaction.user,
+                interaction.user.id,
+                error=e,
+                exc_info=True,
+            )
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Refresh fehlgeschlagen.", ephemeral=True)
             else:
@@ -228,12 +247,22 @@ class Wiki(commands.Cog):
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession()
-        log.info("Wiki-Cog geladen (Session geöffnet).")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "cog_loaded",
+        )
 
     async def cog_unload(self):
         if self.session and not self.session.closed:
             await self.session.close()
-        log.info("Wiki-Cog entladen (Session geschlossen).")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "cog_unloaded",
+        )
 
     # --------- Cache-aware Helper ---------
 
@@ -274,7 +303,17 @@ class Wiki(commands.Cog):
                     name=_truncate(f"{title} — {desc}", 100), value=title))
             return choices[:25]
         except Exception as e:
-            log.exception("Autocomplete error: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "autocomplete_failed",
+                interaction.user,
+                interaction.user.id,
+                current=current,
+                error=e,
+                exc_info=True,
+            )
             return []
 
     # -------------------- Commands --------------------
@@ -297,7 +336,16 @@ class Wiki(commands.Cog):
             results = await wiki_search_titles(self.session, lang, query, limit=SEARCH_LIMIT_DEFAULT)
             if not results:
                 await interaction.followup.send("😕 Keine Treffer.", ephemeral=True)
-                log.info("Wiki suchen: keine Treffer für '%s' (%s)", query, lang)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "search_no_results",
+                    interaction.user,
+                    interaction.user.id,
+                    query=query,
+                    lang=lang,
+                )
                 return
 
             first_title = results[0].get("title") or results[0].get("key")
@@ -309,9 +357,30 @@ class Wiki(commands.Cog):
             embed = build_summary_embed(data, lang)
             view = SearchResultsView(self, lang, results, data)
             await interaction.followup.send(embed=embed, view=view)
-            log.info("Wiki suchen: '%s' (%s) -> %s", query, lang, first_title)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "search_success",
+                interaction.user,
+                interaction.user.id,
+                query=query,
+                lang=lang,
+                first_title=first_title,
+            )
         except Exception as e:
-            log.exception("Wiki suchen Fehler: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "search_failed",
+                interaction.user,
+                interaction.user.id,
+                query=query,
+                lang=lang,
+                error=e,
+                exc_info=True,
+            )
             await interaction.followup.send("❌ Fehler bei der Suche.", ephemeral=True)
 
     @wiki.command(name="artikel", description="Zeigt einen bestimmten Wikipedia-Artikel.")
@@ -331,9 +400,29 @@ class Wiki(commands.Cog):
             view = SearchResultsView(
                 self, lang, [{"title": title, "description": data.get("description", "")}], data)
             await interaction.followup.send(embed=embed, view=view)
-            log.info("Wiki artikel: %s (%s)", title, lang)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "article",
+                interaction.user,
+                interaction.user.id,
+                title=title,
+                lang=lang,
+            )
         except Exception as e:
-            log.exception("Wiki artikel Fehler: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "article_failed",
+                interaction.user,
+                interaction.user.id,
+                title=title,
+                lang=lang,
+                error=e,
+                exc_info=True,
+            )
             await interaction.followup.send("❌ Artikel konnte nicht geladen werden.", ephemeral=True)
 
     @wiki.command(name="zufall", description="Zeigt einen zufälligen Wikipedia-Artikel.")
@@ -355,9 +444,28 @@ class Wiki(commands.Cog):
             view = SearchResultsView(
                 self, lang, [{"title": title, "description": data.get("description", "")}], data)
             await interaction.followup.send(embed=embed, view=view)
-            log.info("Wiki zufall: %s (%s)", title, lang)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "random",
+                interaction.user,
+                interaction.user.id,
+                title=title,
+                lang=lang,
+            )
         except Exception as e:
-            log.exception("Wiki zufall Fehler: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "random_failed",
+                interaction.user,
+                interaction.user.id,
+                lang=lang,
+                error=e,
+                exc_info=True,
+            )
             await interaction.followup.send("❌ Zufallsartikel konnte nicht geladen werden.", ephemeral=True)
 
 

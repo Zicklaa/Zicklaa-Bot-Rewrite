@@ -4,6 +4,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Magic8")
 
 # Feste Antworten der Magic-8-Ball-Logik
@@ -68,9 +70,14 @@ class Magic8(commands.Cog):
                     "🤔 Stell mir eine Frage, damit ich sie beantworten kann!",
                     ephemeral=True
                 )
-                logger.info(
-                    " /magic8 ohne Frage von %s (ID: %s)",
-                    interaction.user, interaction.user.id
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "No question provided",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/magic8",
                 )
                 return
 
@@ -80,18 +87,32 @@ class Magic8(commands.Cog):
                 f"🎱 **Frage:** {frage}\n**Antwort:** {antwort}",
                 allowed_mentions=discord.AllowedMentions.none()
             )
-            logger.info(
-                " /magic8 Antwort an %s (ID: %s) – Frage: %r, Antwort: %r",
-                interaction.user, interaction.user.id, frage, antwort
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Answer sent",
+                interaction.user,
+                interaction.user.id,
+                command="/magic8",
+                question=frage,
+                answer=antwort,
             )
 
         except Exception as e:
             await interaction.response.send_message(
                 "❌ Klappt nit lol 🤷", ephemeral=True
             )
-            logger.error(
-                "Fehler bei /magic8 von %s (ID: %s): %s",
-                interaction.user, interaction.user.id, e
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/magic8",
+                error=e,
+                exc_info=True,
             )
 
 

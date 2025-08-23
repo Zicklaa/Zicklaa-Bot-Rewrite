@@ -15,6 +15,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.logging_helper import log_event
 
 logger = logging.getLogger("ZicklaaBotRewrite.Rezept")
 
@@ -40,12 +41,10 @@ class Rezept(commands.Cog):
         Holt die Pins aus dem angegebenen (oder Default-)Kanal und postet
         einen Link zu einer zufälligen gepinnten Nachricht.
         """
-        # Nur in Guilds sinnvoll
         if interaction.guild is None:
             await interaction.response.send_message("❌ Dieser Befehl funktioniert nur auf einem Server.", ephemeral=True)
             return
 
-        # Channel-Gate: nur in erlaubten Channels (inkl. deren Threads)
         ch = interaction.channel
         parent_id = ch.parent_id if isinstance(
             ch, (discord.Thread, discord.ForumChannel)) else None
@@ -71,43 +70,64 @@ class Rezept(commands.Cog):
 
             if target_channel is None:
                 await interaction.followup.send("❌ Konnte den Rezepte-Kanal nicht finden.", ephemeral=True)
-                logger.warning(
-                    "Rezept: Zielkanal nicht gefunden (guild=%s, channel_id=%s)",
-                    interaction.guild.id, DEFAULT_RECIPE_CHANNEL_ID
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Channel not found",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/rezept",
+                    guild=interaction.guild.id,
                 )
                 return
 
-            # Pins laden
             pins = await target_channel.pins()
             if not pins:
                 await interaction.followup.send(
                     f"ℹ️ In {target_channel.mention} sind keine Pins vorhanden.",
                     ephemeral=True,
                 )
-                logger.info("Rezept: Keine Pins in #%s (%s)",
-                            target_channel.name, target_channel.id)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "No pinned recipes",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/rezept",
+                    channel=target_channel.id,
+                )
                 return
 
-            # Zufällige gepinnte Nachricht wählen
             message = random.choice(pins)
-
-            # Öffentlich antworten (Link ist für alle sichtbar)
 
             quote_cog = self.bot.get_cog("Quote")
             if not quote_cog:
                 await interaction.followup.send(message.jump_url)
-                logger.info(
-                    "Rezept: Link gesendet (%s) von %s in guild %s",
-                    message.jump_url, interaction.user, interaction.guild.id
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Recipe link sent",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/rezept",
+                    url=message.jump_url,
                 )
                 return
 
             embed = await quote_cog.build_quote_embed_from_link(message.jump_url)
             await interaction.followup.send(embed=embed)
-
-            logger.info(
-                "Rezept: Link gesendet (%s) von %s in guild %s",
-                message.jump_url, interaction.user, interaction.guild.id
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Recipe link sent",
+                interaction.user,
+                interaction.user.id,
+                command="/rezept",
+                url=message.jump_url,
             )
 
         except discord.Forbidden:
@@ -115,10 +135,29 @@ class Rezept(commands.Cog):
                 "❌ Mir fehlen Berechtigungen, um Pins in diesem Kanal zu lesen.",
                 ephemeral=True,
             )
-            logger.exception("Rezept: Missing permissions in channel")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Missing permissions",
+                interaction.user,
+                interaction.user.id,
+                command="/rezept",
+                exc_info=True,
+            )
         except Exception as e:
             await interaction.followup.send("❌ Klappt nit lol 🤷", ephemeral=True)
-            logger.exception("Rezept: Unerwarteter Fehler: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/rezept",
+                error=e,
+                exc_info=True,
+            )
 
 
 # -------------------- Setup --------------------

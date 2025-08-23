@@ -3,6 +3,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Git")
 
 # Optional: Falls du den Link später zentral ändern möchtest
@@ -29,18 +31,31 @@ class Git(commands.Cog):
                 REPO_URL,
                 allowed_mentions=discord.AllowedMentions.none()
             )
-            logger.info(
-                "Git-Link an %s (ID: %s) gesendet.",
-                interaction.user, interaction.user.id
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Command executed",
+                interaction.user,
+                interaction.user.id,
+                command="/git",
+                url=REPO_URL,
             )
         except Exception as e:
             await interaction.response.send_message(
                 "❌ Irgendwas klappt nedde. Scheiß Zicklaa zsamme gschwind. Hint: git_gud()",
                 ephemeral=True
             )
-            logger.error(
-                "Fehler bei /git von %s (ID: %s): %s",
-                interaction.user, interaction.user.id, e
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/git",
+                error=e,
+                exc_info=True,
             )
 
 

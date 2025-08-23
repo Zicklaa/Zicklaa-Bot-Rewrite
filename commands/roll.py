@@ -3,6 +3,7 @@ import random
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.logging_helper import log_event
 
 logger = logging.getLogger("ZicklaaBotRewrite.Roll")
 
@@ -20,7 +21,7 @@ class Roll(commands.Cog):
     # -------------------- /roll --------------------
     @app_commands.command(
         name="roll",
-        description="Würfelt eine Zahl oder mehrere Würfel (z. B. 6, oder 3d20)."
+        description="Würfelt eine Zahl oder mehrere Würfel (z. B. 6, oder 3d20).",
     )
     @app_commands.describe(
         anzahl="Anzahl Würfe (z. B. 3 für 3 Würfe, optional)",
@@ -39,15 +40,20 @@ class Roll(commands.Cog):
         - mit 2 Zahlen: würfelt N Würfel mit X Seiten
         """
         try:
-            # Sanity Checks
             if anzahl < MIN_ZAHL or seiten < MIN_ZAHL:
                 await interaction.response.send_message(
                     f"❌ Zahl(en) zu klein. Mindestens {MIN_ZAHL}.",
                     ephemeral=True
                 )
-                logger.warning(
-                    "Ungültige Eingabe bei /roll von %s (ID: %s): anzahl=%d, seiten=%d",
-                    interaction.user, interaction.user.id, anzahl, seiten
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Invalid roll input",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/roll",
+                    dice=f"{anzahl}d{seiten}",
                 )
                 return
 
@@ -56,26 +62,37 @@ class Roll(commands.Cog):
                     f"❌ Maximal {MAX_WUERFE} Würfe erlaubt.",
                     ephemeral=True
                 )
-                logger.warning(
-                    "Zu viele Würfe bei /roll von %s (ID: %s): anzahl=%d",
-                    interaction.user, interaction.user.id, anzahl
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Too many rolls",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/roll",
+                    dice=f"{anzahl}d{seiten}",
                 )
                 return
 
-            # Ein einzelner Wurf 1..N (z. B. /roll seiten:20, anzahl:1)
             if anzahl == 1:
                 wurf = random.randint(1, seiten)
                 await interaction.response.send_message(
                     f"🎲 Ergebnis: **{wurf}** (1d{seiten})",
                     allowed_mentions=discord.AllowedMentions.none()
                 )
-                logger.info(
-                    "Einzelner Wurf bei /roll an %s (ID: %s): %dd%d = %d",
-                    interaction.user, interaction.user.id, anzahl, seiten, wurf
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Single roll",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/roll",
+                    result=wurf,
+                    sides=seiten,
                 )
                 return
 
-            # Mehrere Würfe → Liste + Gesamt
             wuerfe = [random.randint(1, seiten) for _ in range(anzahl)]
             gesamt = sum(wuerfe)
 
@@ -104,26 +121,40 @@ class Roll(commands.Cog):
 
             await interaction.response.send_message(
                 embed=embed,
-                allowed_mentions=discord.AllowedMentions.none()
+                allowed_mentions=discord.AllowedMentions.none(),
             )
 
-            logger.info(
-                "Mehrere Würfe bei /roll an %s (ID: %s): %dd%d = %s (Summe %d)",
-                interaction.user, interaction.user.id, anzahl, seiten,
-                wuerfe, gesamt
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Multiple rolls",
+                interaction.user,
+                interaction.user.id,
+                command="/roll",
+                dice=f"{anzahl}d{seiten}",
+                results=wuerfe,
+                total=gesamt,
             )
 
         except Exception as e:
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error(
-                "Fehler bei /roll von %s (ID: %s): %s",
-                interaction.user, interaction.user.id, e
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/roll",
+                error=e,
+                exc_info=True,
             )
 
     # -------------------- /coinflip --------------------
     @app_commands.command(
         name="coinflip",
-        description="Wirft eine Münze (Kopf oder Zahl)."
+        description="Wirft eine Münze (Kopf oder Zahl).",
     )
     async def coinflip(self, interaction: discord.Interaction):
         """
@@ -132,21 +163,32 @@ class Roll(commands.Cog):
         """
         try:
             result = random.choice(["Kopf", "Zahl"])
-            emoji = "🪙" if result == "Kopf" else "🪙"
             await interaction.response.send_message(
-                f"{emoji} **{result}!**",
+                f"🪙 **{result}!**",
                 allowed_mentions=discord.AllowedMentions.none()
             )
-            logger.info(
-                "Coinflip an %s (ID: %s): %s",
-                interaction.user, interaction.user.id, result
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Coinflip",
+                interaction.user,
+                interaction.user.id,
+                command="/coinflip",
+                result=result,
             )
-
         except Exception as e:
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error(
-                "Fehler bei /coinflip von %s (ID: %s): %s",
-                interaction.user, interaction.user.id, e
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Coinflip failed",
+                interaction.user,
+                interaction.user.id,
+                command="/coinflip",
+                error=e,
+                exc_info=True,
             )
 
 

@@ -22,6 +22,7 @@ from discord import app_commands
 from dateutil import tz
 
 from utils.parser import RemindmeParser
+from utils.logging_helper import log_event
 
 # -------------------- Logger & Konfiguration --------------------
 
@@ -305,9 +306,18 @@ class RemindMe(commands.Cog):
         # 3) Reminder speichern – message_id = Bestätigungsnachricht
         reminder = Reminder(public_msg.id, interaction.channel_id,
                             interaction.user.id, text or "", ts)
-        self.insert_reminder(reminder)
-        logger.info(
-            f"Reminder erstellt (in): User={interaction.user.id}, Zeit={ts}, Text='{text}'")
+        reminder = self.insert_reminder(reminder)
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "reminder_created_relative",
+            interaction.user,
+            interaction.user.id,
+            reminder_id=reminder._id,
+            reminder_time=ts,
+            text=text or "",
+        )
 
     # -------- /remindme at --------
     @remindme.command(name="at", description="Erinnere mich zu Datum/Uhrzeit (natürliche Eingabe)")
@@ -374,12 +384,31 @@ class RemindMe(commands.Cog):
             # 3) Reminder speichern – message_id = Bestätigungsnachricht
             reminder = Reminder(
                 public_msg.id, interaction.channel_id, interaction.user.id, reason, ts)
-            self.insert_reminder(reminder)
-            logger.info(
-                f"Reminder erstellt (at): User={interaction.user.id}, Zeit={ts}, Text='{reason}'")
+            reminder = self.insert_reminder(reminder)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "reminder_created_absolute",
+                interaction.user,
+                interaction.user.id,
+                reminder_id=reminder._id,
+                reminder_time=ts,
+                text=reason,
+            )
 
         except Exception as e:
-            logger.error(f"RemindMe /at Parse-Fehler: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "remind_at_parse_failed",
+                interaction.user,
+                interaction.user.id,
+                input=input,
+                error=e,
+                exc_info=True,
+            )
             await interaction.response.send_message("❌ Ungültiges Eingabeformat.", ephemeral=True)
 
     # -------- /remindme list --------
@@ -402,7 +431,14 @@ class RemindMe(commands.Cog):
                         await self.send_reminder(reminder)
                 await asyncio.sleep(10)
         except Exception as e:
-            logger.error(f"RemindMe check_reminder(): {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "check_reminder_loop_failed",
+                error=e,
+                exc_info=True,
+            )
 
     # ---------- DB/Utility ----------
 
@@ -424,11 +460,27 @@ class RemindMe(commands.Cog):
 
             view = ReminderListView(user=interaction.user, records=records)
             await view.send_initial(interaction)
-            logger.info(
-                "Reminder-Liste gesendet an User=%s (Einträge=%d)", user_id, len(records))
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "reminder_list_sent",
+                interaction.user,
+                interaction.user.id,
+                entries=len(records),
+            )
 
         except Exception as e:
-            logger.exception("RemindMe get_all_reminders(): %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "reminder_list_failed",
+                interaction.user,
+                interaction.user.id,
+                error=e,
+                exc_info=True,
+            )
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Konnte deine Reminder nicht laden.", ephemeral=True)
             else:
@@ -455,11 +507,28 @@ class RemindMe(commands.Cog):
                  reminder.time, reminder.message_id),
             )
             new_id = self.cursor.fetchall()[0][0]
-            logger.info(f"Neuer Reminder in die DB gepusht: {new_id}")
             reminder._id = new_id
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "db_insert_reminder",
+                user=None,
+                user_id=reminder.user_id,
+                reminder_id=new_id,
+            )
             return reminder
         except Exception as e:
-            logger.error("RemindMe insert_reminder(): " + str(e))
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "db_insert_reminder_failed",
+                user=None,
+                user_id=reminder.user_id,
+                error=e,
+                exc_info=True,
+            )
 
     async def send_reminder(self, reminder: Reminder):
         """Sendet einen fälligen Reminder und löscht ihn danach."""
@@ -493,14 +562,33 @@ class RemindMe(commands.Cog):
             if reminder._id != self.global_state.get("reminder_id"):
                 self.delete_reminder(reminder)
                 self.global_state["reminder_id"] = reminder._id
-                logger.info(f"Auf Reminder geantwortet: {reminder._id}")
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "reminder_delivered",
+                    user=None,
+                    user_id=reminder.user_id,
+                    reminder_id=reminder._id,
+                    channel_id=reminder.channel_id,
+                )
                 if parent_msg:
                     await parent_msg.reply(content, mention_author=True)
                 else:
                     await channel.send(content)
 
         except Exception as e:
-            logger.error(f"RemindMe send_reminder(): {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "send_reminder_failed",
+                user=None,
+                user_id=reminder.user_id,
+                reminder_id=reminder._id,
+                error=e,
+                exc_info=True,
+            )
 
     async def check_reminder_exists(self, reminder: Reminder):
         """Prüft, ob ein Reminder noch in der Datenbank existiert."""
@@ -510,7 +598,17 @@ class RemindMe(commands.Cog):
             ).fetchone()
             return bool(res)
         except Exception as e:
-            logger.error("RemindMe check_reminder_exists(): " + str(e))
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "db_check_failed",
+                user=None,
+                user_id=reminder.user_id,
+                reminder_id=reminder._id,
+                error=e,
+                exc_info=True,
+            )
             return False
 
     def delete_reminder(self, reminder: Reminder):
@@ -519,9 +617,25 @@ class RemindMe(commands.Cog):
             self.cursor.execute(
                 "DELETE FROM reminders WHERE id=?", (reminder._id,))
             self.db.commit()
-            logger.info(f"Reminder gelöscht: {reminder._id}")
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "db_delete_reminder",
+                user=None,
+                reminder_id=reminder._id,
+            )
         except Exception as e:
-            logger.error("RemindMe delete_reminder(): " + str(e))
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "db_delete_reminder_failed",
+                user=None,
+                reminder_id=reminder._id,
+                error=e,
+                exc_info=True,
+            )
 
 # -------------------- Cog-Setup --------------------
 

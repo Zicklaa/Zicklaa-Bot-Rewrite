@@ -6,6 +6,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.raw_models import RawReactionActionEvent
 from dateutil import tz
+from utils.logging_helper import log_event
 
 # -------------------- Konfiguration & Logger --------------------
 
@@ -101,7 +102,17 @@ class Star(commands.Cog):
                 try:
                     await attachment.save(filename)
                 except Exception as e:
-                    logger.error(f"Star Fehler beim Speichern: {e}")
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        self.__class__.__name__,
+                        "attachment_save_failed",
+                        message.author,
+                        message.author.id,
+                        file=attachment.filename,
+                        error=e,
+                        exc_info=True,
+                    )
 
         # Restliche Infos
         embed.add_field(
@@ -133,10 +144,26 @@ class Star(commands.Cog):
             self.cursor.execute(sql, val)
             self.db.commit()
         except Exception as e:
-            logger.error(f"Star Error beim DB Pushen: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "db_insert_star_failed",
+                message.author,
+                message.author.id,
+                message_id=message.id,
+                error=e,
+                exc_info=True,
+            )
 
-        logger.info(
-            f"Star gepostet von {message.author} (ID: {message.author.id})"
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "star_posted",
+            message.author,
+            message.author.id,
+            message_id=message.id,
         )
 
     # --- Event Listener ---
@@ -173,7 +200,17 @@ class Star(commands.Cog):
                         await self.post_star(message)
 
             except Exception as e:
-                logger.error(f"Star Event Error: {e}")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "reaction_event_failed",
+                    user=None,
+                    user_id=user_id,
+                    message_id=message_id,
+                    error=e,
+                    exc_info=True,
+                )
 
     # --- Slash Commands ---
 
@@ -186,18 +223,27 @@ class Star(commands.Cog):
         try:
             if interaction.user.id != ADMIN_ID:
                 await interaction.response.send_message("Das ist VERBOTEN!!", ephemeral=True)
-                logger.info(
-                    f"/star von Nicht-Admin {interaction.user} (ID: {interaction.user.id}) blockiert"
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "star_denied_non_admin",
+                    interaction.user,
+                    interaction.user.id,
+                    link=link,
                 )
                 return
-
             if not link:
                 await interaction.response.send_message("Du musst einen Link angeben!", ephemeral=True)
-                logger.info(
-                    f"/star ohne Link von {interaction.user} (ID: {interaction.user.id})"
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "star_missing_link",
+                    interaction.user,
+                    interaction.user.id,
                 )
                 return
-
             # Link parsen
             try:
                 link_parts = link.split("/")
@@ -205,37 +251,58 @@ class Star(commands.Cog):
                 msg_id = int(link_parts[6])
             except Exception:
                 await interaction.response.send_message("Ungültiger Link.", ephemeral=True)
-                logger.info(
-                    f"/star ungültiger Link von {interaction.user} (ID: {interaction.user.id})"
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "star_invalid_link",
+                    interaction.user,
+                    interaction.user.id,
+                    link=link,
                 )
                 return
-
             channel = self.bot.get_channel(channel_id)
             message = await channel.fetch_message(msg_id)
-
             # DB check
             self.cursor.row_factory = lambda cursor, row: row[0]
             posted_stars = self.cursor.execute(
                 "SELECT message_id FROM stars"
             ).fetchall()
-
             if msg_id in posted_stars:
                 await interaction.response.send_message("Die Nachricht ist schon im Sternbrett.", ephemeral=True)
-                logger.info(
-                    f"/star bereits gepostet von {interaction.user} (ID: {interaction.user.id})"
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "star_already_posted",
+                    interaction.user,
+                    interaction.user.id,
+                    message_id=msg_id,
                 )
                 return
-
             await self.post_star(message)
             await interaction.response.send_message("Star erfolgreich gepostet ✅", ephemeral=True)
-            logger.info(
-                f"/star erfolgreich von {interaction.user} (ID: {interaction.user.id})"
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "star_command_success",
+                interaction.user,
+                interaction.user.id,
+                message_id=msg_id,
             )
-
         except Exception as e:
             await interaction.response.send_message("Fehler beim Posten 🤷", ephemeral=True)
-            logger.error(
-                f"/star Fehler von {interaction.user} (ID: {interaction.user.id}): {e}"
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "star_command_failed",
+                interaction.user,
+                interaction.user.id,
+                link=link,
+                error=e,
+                exc_info=True,
             )
 
 # -------------------- Cog-Setup --------------------

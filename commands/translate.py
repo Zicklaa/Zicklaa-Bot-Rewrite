@@ -1,5 +1,3 @@
-# translate_cog.py
-# -*- coding: utf-8 -*-
 """
 Translate-Cog (discord.py 2.x, deep_translator)
 - /translate from:<sprache> to:<sprache> text:<text> [ephemeral]
@@ -16,8 +14,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from deep_translator import GoogleTranslator
+from utils.logging_helper import log_event
 
-logger = logging.getLogger("ZicklaaBot.Translate")
+logger = logging.getLogger("ZicklaaBotRewrite.Translate")
 
 FLAG = {
     "de": "🇩🇪", "en": "🇬🇧", "us": "🇺🇸", "fr": "🇫🇷", "es": "🇪🇸", "it": "🇮🇹",
@@ -64,7 +63,13 @@ class Translate(commands.Cog):
             return LangTables(name_to_code, code_to_name, all_display)
 
         self.langs = await asyncio.to_thread(_load_langs)
-        logger.info("Translate-Cog geladen. Sprachen: %d", len(self.langs.name_to_code) if self.langs else -1)
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "Cog loaded",
+            languages=len(self.langs.name_to_code) if self.langs else -1,
+        )
 
     def resolve_lang(self, user_input: str) -> str | None:
         if not self.langs:
@@ -101,13 +106,13 @@ class Translate(commands.Cog):
 
     @app_commands.command(
         name="translate",
-        description="Übersetzt einen Text von einer Sprache in eine andere."
+        description="Übersetzt einen Text von einer Sprache in eine andere.",
     )
     @app_commands.describe(
         from_lang="Quellsprache (z. B. de, en, fr – Autocomplete verfügbar)",
         to_lang="Zielsprache (z. B. de, en, fr – Autocomplete verfügbar)",
         text="Zu übersetzender Text",
-        ephemeral="Antwort nur für dich anzeigen"
+        ephemeral="Antwort nur für dich anzeigen",
     )
     @app_commands.autocomplete(to_lang=lang_autocomplete, from_lang=lang_autocomplete)
     async def translate_cmd(
@@ -149,10 +154,30 @@ class Translate(commands.Cog):
             embed.set_footer(text="Google Translate")
 
             await interaction.followup.send(embed=embed)
-            logger.info("Translate OK by %s: %s → %s", interaction.user, src_code, dst_code)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Translation successful",
+                interaction.user,
+                interaction.user.id,
+                command="/translate",
+                source=src_code,
+                target=dst_code,
+            )
 
         except Exception as e:
-            logger.exception("Translate Fehler: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Translation failed",
+                interaction.user,
+                interaction.user.id,
+                command="/translate",
+                error=e,
+                exc_info=True,
+            )
             await interaction.followup.send("❌ Konnte nicht übersetzen.", ephemeral=True)
 
 

@@ -16,6 +16,8 @@ import pylast
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Lyrics")
 
 # -------------------- Settings --------------------
@@ -109,7 +111,16 @@ class Lyrics(commands.Cog):
             track = user.get_now_playing()
             if not track:
                 await interaction.followup.send("🎧 Dieser User hört gerade nichts.")
-                logger.info("Lyrics Full: User hört nix (%s)", username)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "User not playing",
+                    interaction.user,
+                    interaction.user.id,
+                    command="lyrics full",
+                    target=username,
+                )
                 return
 
             embed = self._build_song_embed(user, track, username)
@@ -133,15 +144,45 @@ class Lyrics(commands.Cog):
             except Exception as e:
                 embed.add_field(
                     name="Lyrics", value="❌ Fehler beim Abrufen von Lyrics.", inline=False)
-                logger.error(
-                    "Lyrics Full: Genius-Error für %s (%s): %s", username, track, e)
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "Genius error",
+                    interaction.user,
+                    interaction.user.id,
+                    command="lyrics full",
+                    target=username,
+                    error=e,
+                    exc_info=True,
+                )
 
             await interaction.followup.send(embed=embed)
-            logger.info("Lyrics Full gepostet für %s", username)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Lyrics full sent",
+                interaction.user,
+                interaction.user.id,
+                command="lyrics full",
+                target=username,
+            )
 
         except Exception as e:
             await interaction.followup.send("❌ Fehler beim Abrufen von Daten.", ephemeral=True)
-            logger.exception("Lyrics Full Fehler für %s: %s", username, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Lyrics full failed",
+                interaction.user,
+                interaction.user.id,
+                command="lyrics full",
+                target=username,
+                error=e,
+                exc_info=True,
+            )
 
     @lyrics.command(name="link", description="Aktuellen Song + Genius-Link anzeigen")
     async def lyrics_link(self, interaction: discord.Interaction, username: str):
@@ -157,7 +198,16 @@ class Lyrics(commands.Cog):
             track = user.get_now_playing()
             if not track:
                 await interaction.followup.send("🎧 Dieser User hört gerade nichts.")
-                logger.info("Lyrics Link: User hört nix (%s)", username)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "User not playing",
+                    interaction.user,
+                    interaction.user.id,
+                    command="lyrics link",
+                    target=username,
+                )
                 return
 
             embed = self._build_song_embed(user, track, username)
@@ -175,15 +225,45 @@ class Lyrics(commands.Cog):
             except Exception as e:
                 embed.add_field(
                     name="Lyrics-Link", value="❌ Fehler beim Abrufen des Links.", inline=False)
-                logger.error(
-                    "Lyrics Link: Genius-Error für %s (%s): %s", username, track, e)
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "Genius error",
+                    interaction.user,
+                    interaction.user.id,
+                    command="lyrics link",
+                    target=username,
+                    error=e,
+                    exc_info=True,
+                )
 
             await interaction.followup.send(embed=embed)
-            logger.info("Lyrics Link gepostet für %s", username)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Lyrics link sent",
+                interaction.user,
+                interaction.user.id,
+                command="lyrics link",
+                target=username,
+            )
 
         except Exception as e:
             await interaction.followup.send("❌ Fehler beim Abrufen von Daten.", ephemeral=True)
-            logger.exception("Lyrics Link Fehler für %s: %s", username, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Lyrics link failed",
+                interaction.user,
+                interaction.user.id,
+                command="lyrics link",
+                target=username,
+                error=e,
+                exc_info=True,
+            )
 
 
 # -------------------- Setup --------------------

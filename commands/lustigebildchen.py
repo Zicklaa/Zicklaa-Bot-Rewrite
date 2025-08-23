@@ -5,6 +5,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.LustigeBildchen")
 
 # Pfad zu den Bildern
@@ -27,14 +29,30 @@ class LustigeBildchen(commands.Cog):
             # Bild senden
             await interaction.response.send_message(file=discord.File(file_path))
 
-            logger.info(
-                f"Lustiges Bildchen gepostet für {interaction.user} (ID: {interaction.user.id})"
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Image sent",
+                interaction.user,
+                interaction.user.id,
+                command="/ltb",
+                file=file_name,
             )
 
         except Exception as e:
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error(
-                f"Lustiges Bildchen ERROR von {interaction.user} (ID: {interaction.user.id}): {e}"
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Image send failed",
+                interaction.user,
+                interaction.user.id,
+                command="/ltb",
+                file=file_name if 'file_name' in locals() else None,
+                error=e,
+                exc_info=True,
             )
 
 

@@ -17,6 +17,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Discordle")
 logging.basicConfig(level=logging.INFO)
 
@@ -137,7 +139,15 @@ async def add_guess_reactions(msg: discord.Message):
         try:
             await msg.add_reaction(emoji)
         except Exception as e:
-            logger.warning("Reaction %s konnte nicht hinzugefügt werden: %s", emoji, e)
+            log_event(
+                logger,
+                logging.WARNING,
+                "Discordle",
+                "Reaction add failed",
+                emoji=emoji,
+                error=e,
+                exc_info=True,
+            )
 
 # --- Embeds --------------------------------------------------------------
 

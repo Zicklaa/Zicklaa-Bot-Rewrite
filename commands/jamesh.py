@@ -2,6 +2,7 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.logging_helper import log_event
 
 logger = logging.getLogger("ZicklaaBotRewrite.JamesH")
 
@@ -14,7 +15,7 @@ class JamesH(commands.Cog):
 
     @app_commands.command(
         name="jamesh",
-        description="Postet den berühmten James Hoffmann Satz."
+        description="Postet den berühmten James Hoffmann Satz.",
     )
     async def jamesh(self, interaction: discord.Interaction):
         """
@@ -26,17 +27,31 @@ class JamesH(commands.Cog):
                 "Da gibt es ein James Hoffmann Video dazu.",
                 allowed_mentions=discord.AllowedMentions.none()
             )
-
-            logger.info("JamesH ausgeführt von %s (ID: %s)",
-                        interaction.user, interaction.user.id)
-
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Command executed",
+                interaction.user,
+                interaction.user.id,
+                command="/jamesh",
+            )
         except Exception as e:
             await interaction.response.send_message(
                 "Irgendwas klappt nedde. Scheiß Zicklaa zsamme gschwind. Hint: JamesH()",
                 ephemeral=True
             )
-            logger.error("Fehler bei /jamesh von %s (ID: %s): %s",
-                         interaction.user, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/jamesh",
+                error=e,
+                exc_info=True,
+            )
 
 
 # Standard Setup für discord.py 2.x

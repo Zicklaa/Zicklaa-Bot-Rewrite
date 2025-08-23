@@ -5,6 +5,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Datum")
 
 # --- Locale einmalig (best effort) auf Deutsch setzen ---
@@ -67,14 +69,30 @@ class Datum(commands.Cog):
             text = f"Heute ist **{tag}**, der **{datum}**."
             await interaction.response.send_message(text)
 
-            logger.info(
-                "Datum geschickt an %s (ID: %s): %s",
-                interaction.user, interaction.user.id, text
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Date sent",
+                interaction.user,
+                interaction.user.id,
+                command="/datum",
+                message=text,
             )
         except Exception as e:
             # Fehler sauber an den Nutzer melden (ephemeral)
             await interaction.response.send_message("Puh, schwierig 🤷", ephemeral=True)
-            logger.error("Datum ERROR für %s (ID: %s): %s", interaction.user, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Date error",
+                interaction.user,
+                interaction.user.id,
+                command="/datum",
+                error=e,
+                exc_info=True,
+            )
 
 
 # --- Cog-Setup (discord.py 2.x) ---
