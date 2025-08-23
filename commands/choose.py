@@ -5,6 +5,7 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.logging_helper import log_event
 
 logger = logging.getLogger("ZicklaaBotRewrite.Choose")
 
@@ -23,10 +24,7 @@ def _parse_options(raw: str) -> list[str]:
     if not raw:
         return []
 
-    # Trenner für das CSV-Parsing vereinheitlichen
     normalized = raw.replace(";", ",").replace("|", ",")
-
-    # CSV-Reader respektiert Anführungszeichen, z. B.: "ja bitte, mit Soße", nein, vielleicht
     reader = csv.reader(io.StringIO(normalized))
     parsed = []
     for row in reader:
@@ -35,7 +33,6 @@ def _parse_options(raw: str) -> list[str]:
             if item:
                 parsed.append(item)
 
-    # Duplikate entfernen (reihenfolgentreu)
     seen = set()
     deduped = []
     for opt in parsed:
@@ -43,8 +40,6 @@ def _parse_options(raw: str) -> list[str]:
         if key not in seen:
             seen.add(key)
             deduped.append(opt)
-
-    # Auf MAX_OPTIONS kappen
     return deduped[:MAX_OPTIONS]
 
 
@@ -56,10 +51,10 @@ class Choose(commands.Cog):
 
     @app_commands.command(
         name="choose",
-        description="Wählt zufällig eine Option aus einer Liste."
+        description="Wählt zufällig eine Option aus einer Liste.",
     )
     @app_commands.describe(
-        options="Optionen getrennt durch Komma/Semikolon/Pipe oder in Anführungszeichen. z. B.: Pizza, Döner; Burger | \"Nudeln mit Soße\""
+        options="Optionen getrennt durch Komma/Semikolon/Pipe oder in Anführungszeichen. z. B.: Pizza, Döner; Burger | \"Nudeln mit Soße\"",
     )
     async def choose(self, interaction: discord.Interaction, options: str):
         """
@@ -74,29 +69,48 @@ class Choose(commands.Cog):
                     f"❌ Gib mindestens {MIN_OPTIONS_REQUIRED} Optionen an, z. B.: `Pizza, Döner, Burger`.",
                     ephemeral=True
                 )
-                logger.warning(
-                    "Zu wenige Optionen bei /choose von %s (ID: %s). Eingabe: %r",
-                    interaction.user, interaction.user.id, options
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Too few options",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/choose",
+                    supplied=len(items),
                 )
                 return
 
             pick = random.choice(items)
 
-            # Antwort ohne Nutzer-/Rollen-Pings senden
             await interaction.response.send_message(
                 f"🎱 Oh magische Miesmuschel! Wie lautet deine Antwort?\n**{pick}**"
             )
 
-            logger.info(
-                "Antwort für /choose an %s (ID: %s). Kandidaten: %d, Gewählt: %r",
-                interaction.user, interaction.user.id, len(items), pick
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Option chosen",
+                interaction.user,
+                interaction.user.id,
+                command="/choose",
+                options=len(items),
+                result=pick,
             )
 
         except Exception as e:
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error(
-                "Fehler bei /choose von %s (ID: %s): %s",
-                interaction.user, interaction.user.id, e
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/choose",
+                error=e,
+                exc_info=True,
             )
 
 

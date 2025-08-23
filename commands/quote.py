@@ -18,6 +18,8 @@ from discord import app_commands
 from discord.ext import commands
 from dateutil import tz
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Quote")
 
 
@@ -124,7 +126,15 @@ class Quote(commands.Cog):
                 await interaction.response.send_message(
                     "❌ Bitte gib einen Nachrichtenlink an!", ephemeral=True
                 )
-                logger.info("/quote ohne Link von %s (ID: %s)", interaction.user, interaction.user.id)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Missing link",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/quote",
+                )
                 return
 
             await interaction.response.defer(thinking=True)
@@ -132,9 +142,15 @@ class Quote(commands.Cog):
             try:
                 embed = await self.build_quote_embed_from_link(link)
                 await interaction.followup.send(embed=embed)
-                logger.info(
-                    "/quote von %s (ID: %s) – erfolgreich",
-                    interaction.user, interaction.user.id
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Quote sent",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/quote",
+                    link=link,
                 )
             except Exception as e:
                 # Fehler beim Verarbeiten des Links / Fetch
@@ -142,7 +158,18 @@ class Quote(commands.Cog):
                     "❌ Konnte den Link nicht verarbeiten 🤷",
                     ephemeral=True,
                 )
-                logger.error("Fehler bei /quote von %s (ID: %s): %s", interaction.user, interaction.user.id, e)
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "Processing error",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/quote",
+                    link=link,
+                    error=e,
+                    exc_info=True,
+                )
 
         except Exception as e:
             # Falls aus irgendeinem Grund noch keine Antwort raus ist:
@@ -150,7 +177,18 @@ class Quote(commands.Cog):
                 await interaction.followup.send("❌ Fehler beim Ausführen 🤷", ephemeral=True)
             else:
                 await interaction.response.send_message("❌ Fehler beim Ausführen 🤷", ephemeral=True)
-            logger.exception("Unerwarteter Fehler bei /quote von %s (ID: %s): %s", interaction.user, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Unexpected failure",
+                interaction.user,
+                interaction.user.id,
+                command="/quote",
+                link=link,
+                error=e,
+                exc_info=True,
+            )
 
     # -------------------- interne Helfer --------------------
 

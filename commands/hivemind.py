@@ -3,6 +3,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from utils.logging_helper import log_event
+
 # -------------------- Logger & Konfiguration --------------------
 
 logger = logging.getLogger("ZicklaaBotRewrite.Hivemind")
@@ -41,17 +43,43 @@ class Hivemind(commands.Cog):
                 if satz:
                     await interaction.response.send_message(satz, allowed_mentions=am)
                     break
-            logger.info("Hivemind für: %s", interaction.user.name)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Sentence sent",
+                interaction.user,
+                interaction.user.id,
+                command="/hm",
+            )
         except Exception as e:
             await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            logger.error("Hivemind ERROR von %s: %s", interaction.user.name, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Sentence failed",
+                interaction.user,
+                interaction.user.id,
+                command="/hm",
+                error=e,
+                exc_info=True,
+            )
 
     @app_commands.command(name="hmm", description="Generiert 5 zufällige Sätze (nur im Spam-Channel).")
     async def hmm(self, interaction: discord.Interaction):
         if interaction.channel_id != SPAM_CHANNEL_ID:
             await interaction.response.send_message("Spam woanders, Moruk 🤷", ephemeral=True)
-            logger.info("Hippomode ERROR von %s (ID: %s)",
-                        interaction.user.name, interaction.user.id)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Wrong channel",
+                interaction.user,
+                interaction.user.id,
+                command="/hmm",
+                channel_id=interaction.channel_id,
+            )
             return
 
         try:
@@ -75,8 +103,15 @@ class Hivemind(commands.Cog):
             except Exception:
                 pass
 
-            logger.info("Hivemind /hmm von %s (ID: %s)",
-                        interaction.user.name, interaction.user.id)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "HMM executed",
+                interaction.user,
+                interaction.user.id,
+                command="/hmm",
+            )
 
         except Exception as e:
             # Falls das Löschen oben fehlschlug, wenigstens sauber abschließen
@@ -84,8 +119,17 @@ class Hivemind(commands.Cog):
                 await interaction.followup.send("Klappt nit lol 🤷", ephemeral=True)
             except Exception:
                 pass
-            logger.error("Hivemind ERROR von %s (ID: %s): %s",
-                         interaction.user.name, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "HMM failed",
+                interaction.user,
+                interaction.user.id,
+                command="/hmm",
+                error=e,
+                exc_info=True,
+            )
 
 
 # -------------------- Cog-Setup --------------------

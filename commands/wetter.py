@@ -7,6 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 from pathlib import Path
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Wetter")
 
 # Pfad für Wetter-Datei
@@ -41,15 +43,34 @@ class Wetter(commands.Cog):
             await interaction.followup.send(
                 file=discord.File(WETTER_FILE)
             )
-            logger.info("Wetter gepostet für %s (ID: %s), Ort: %s",
-                        interaction.user, interaction.user.id, location)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Weather image sent",
+                interaction.user,
+                interaction.user.id,
+                command="/wetter",
+                location=location,
+                url=url_png,
+            )
 
         except Exception as e:
             await interaction.followup.send(
                 "Wetter schmetter, sag ich schon immer.", ephemeral=True
             )
-            logger.error("Fehler bei /wetter von %s (ID: %s): %s",
-                         interaction.user, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Weather image failed",
+                interaction.user,
+                interaction.user.id,
+                command="/wetter",
+                location=location,
+                error=e,
+                exc_info=True,
+            )
 
     # -------------------- /asciiwetter --------------------
     @app_commands.command(
@@ -77,15 +98,33 @@ class Wetter(commands.Cog):
             await interaction.followup.send(
                 f"```\n{text}\n```"
             )
-            logger.info("Ascii Wetter gepostet für %s (ID: %s), Ort: %s",
-                        interaction.user, interaction.user.id, location)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "ASCII weather sent",
+                interaction.user,
+                interaction.user.id,
+                command="/asciiwetter",
+                location=location,
+            )
 
         except Exception as e:
             await interaction.followup.send(
                 "Wetter schmetter, sag ich schon immer.", ephemeral=True
             )
-            logger.error("Fehler bei /asciiwetter von %s (ID: %s): %s",
-                         interaction.user, interaction.user.id, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "ASCII weather failed",
+                interaction.user,
+                interaction.user.id,
+                command="/asciiwetter",
+                location=location,
+                error=e,
+                exc_info=True,
+            )
 
 
 # Standard-Setup für discord.py 2.x

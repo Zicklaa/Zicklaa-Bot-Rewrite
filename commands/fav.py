@@ -8,6 +8,8 @@ from dateutil import tz
 from discord.ext import commands
 from discord.raw_models import RawReactionActionEvent
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Fav")
 
 
@@ -42,9 +44,26 @@ class Fav(commands.Cog):
                         if fav and fav[1] == user_id:
                             self.cursor.execute("DELETE FROM favs WHERE id=?", (fav_id,))
                             self.db.commit()
-                            logger.info(f"Fav gelöscht: {fav_id}")
+                            log_event(
+                                logger,
+                                logging.INFO,
+                                self.__class__.__name__,
+                                "Fav deleted",
+                                user_id=user_id,
+                                fav_id=fav_id,
+                                message_id=message_id,
+                            )
             except Exception as e:
-                logger.error(f"Fav Delete ERROR: {e}")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "Fav delete failed",
+                    user_id=user_id,
+                    message_id=message_id,
+                    error=e,
+                    exc_info=True,
+                )
 
         # 🦶 = Save Fav
         if str(emoji) == "🦶":
@@ -52,7 +71,15 @@ class Fav(commands.Cog):
                 user = await self.bot.fetch_user(payload.user_id)
                 dm_channel = await user.create_dm()
                 await dm_channel.send("Antworte bitte mit dem gewünschten Namen für den Fav.")
-                logger.info(f"DM gesendet an {user.name} (ID: {user.id})")
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "DM sent for fav name",
+                    user,
+                    user.id,
+                    command="reaction_add",
+                )
 
                 response = await self.bot.wait_for("message", check=message_check(channel=dm_channel))
                 name = response.content
@@ -62,12 +89,37 @@ class Fav(commands.Cog):
                     self.cursor.execute(sql, val)
                     self.db.commit()
                     await response.add_reaction("👍")
-                    logger.info(f"Neuer Fav angelegt für: {response.author.name} (ID: {response.author.id})")
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        self.__class__.__name__,
+                        "Fav created",
+                        response.author,
+                        response.author.id,
+                        fav_name=name,
+                        message_id=message_id,
+                    )
                 else:
                     await response.reply("Zu lang. Bidde unter 250chars")
-                    logger.info(f"Fav-Name zu lang von {response.author.name} (ID: {response.author.id})")
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        self.__class__.__name__,
+                        "Fav name too long",
+                        response.author,
+                        response.author.id,
+                        fav_name=name,
+                    )
             except Exception as e:
-                logger.error(f"Lustiges Bilchen ERROR von {user_id}: {e}")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    self.__class__.__name__,
+                    "Fav save failed",
+                    user_id=user_id,
+                    error=e,
+                    exc_info=True,
+                )
 
     # ------------------------------------------------------
     # /fav -> eigenen Fav abrufen
@@ -115,16 +167,46 @@ class Fav(commands.Cog):
                         text=f"{fav[0]} | {current_time} | #{fav_message.channel.name} | by: {ctx.author.name} | Name: {fav[3]}"
                     )
                     await ctx.send(embed=embed)
-                    logger.info(f"Fav gepostet für {ctx.author.name} (ID: {ctx.author.id})")
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        self.__class__.__name__,
+                        "Fav posted",
+                        ctx.author,
+                        ctx.author.id,
+                        command="/fav",
+                        fav_id=fav[0],
+                        channel_id=fav[4],
+                    )
                 except Exception as e:
                     await ctx.reply("Klappt nit lol 🤷")
-                    logger.error(f"Fav ERROR von {ctx.author.name}: {e}")
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        self.__class__.__name__,
+                        "Fav send failed",
+                        ctx.author,
+                        ctx.author.id,
+                        command="/fav",
+                        error=e,
+                        exc_info=True,
+                    )
             else:
                 await ctx.message.add_reaction("⛔")
                 await ctx.message.add_reaction("🔍")
         except Exception as e:
             await ctx.reply("Klappt nit lol 🤷")
-            logger.error(f"Fav ERROR von {ctx.author.name}: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Fav command failed",
+                ctx.author,
+                ctx.author.id,
+                command="/fav",
+                error=e,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------
     # /rfav -> Random Fav von allen Usern
@@ -155,15 +237,45 @@ class Fav(commands.Cog):
                         text=f"{current_time} | #{fav_message.channel.name} | Randomized by: {ctx.author.name}"
                     )
                     await ctx.send(embed=embed)
-                    logger.info(f"Random Fav gepostet für {ctx.author.name} (ID: {ctx.author.id})")
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        self.__class__.__name__,
+                        "Random fav posted",
+                        ctx.author,
+                        ctx.author.id,
+                        command="/fav",
+                        fav_id=fav[0],
+                        channel_id=fav[4],
+                    )
                 except Exception as e:
                     await ctx.reply(
                         f"Klappt nit lol 🤷 Eventuell existiert der originale Kommentar nichtmehr. ID: {fav[0]} <@288413759117066241>"
                     )
-                    logger.error(f"Fav ERROR von {ctx.author.name}: {e}")
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        self.__class__.__name__,
+                        "Random fav failed",
+                        ctx.author,
+                        ctx.author.id,
+                        command="/fav",
+                        error=e,
+                        exc_info=True,
+                    )
         except Exception as e:
             await ctx.reply("Klappt nit lol 🤷")
-            logger.error(f"Fav ERROR von {ctx.author.name}: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Fav command failed",
+                ctx.author,
+                ctx.author.id,
+                command="/fav",
+                error=e,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------
     # /allfavs -> Export als TXT per DM
@@ -178,7 +290,15 @@ class Fav(commands.Cog):
                 dm_channel = await ctx.author.create_dm()
                 await ctx.message.delete()
                 await dm_channel.send("Moin 👋 Ich sammele alle deine Favs für dich...")
-                logger.info(f"DM gesendet an {ctx.author.name} (ID: {ctx.author.id}) für allfavs")
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "DM sent for allfavs",
+                    ctx.author,
+                    ctx.author.id,
+                    command="/allfavs",
+                )
 
                 path = f"allfavs/{ctx.author.id}.txt"
 
@@ -215,19 +335,49 @@ class Fav(commands.Cog):
 
                         whole_message += message
                     except Exception as e:
-                        logger.error(f"Allfavs ERROR von {ctx.author.name}: {e}")
+                        log_event(
+                            logger,
+                            logging.ERROR,
+                            self.__class__.__name__,
+                            "Allfavs fetch failed",
+                            ctx.author,
+                            ctx.author.id,
+                            command="/allfavs",
+                            fav_id=fav[0],
+                            error=e,
+                            exc_info=True,
+                        )
 
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(whole_message)
 
                 await dm_channel.send(file=discord.File(path))
-                logger.info(f"DM mit Allfavs-Export gesendet an {ctx.author.name} (ID: {ctx.author.id})")
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Allfavs DM sent",
+                    ctx.author,
+                    ctx.author.id,
+                    command="/allfavs",
+                    file=path,
+                )
             else:
                 await ctx.message.add_reaction("⛔")
                 await ctx.message.add_reaction("🔍")
         except Exception as e:
             await ctx.reply("Klappt nit lol 🤷")
-            logger.error(f"Allfav ERROR von {ctx.author.name}: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Allfavs command failed",
+                ctx.author,
+                ctx.author.id,
+                command="/allfavs",
+                error=e,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------
     # Hilfsfunktionen

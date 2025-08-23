@@ -13,6 +13,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Girlboss")
 
 # -------------------- Daten --------------------
@@ -86,15 +88,41 @@ class Girlboss(commands.Cog):
                     "🚫 Dieser Befehl ist aktuell nur für ausgewählte Queens aktiviert.",
                     ephemeral=True,
                 )
-                logger.info("Girlboss: Zugriff verweigert für %s (%s)", interaction.user, uid)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Access denied",
+                    interaction.user,
+                    uid,
+                    command="/girlboss",
+                )
                 return
 
             # öffentlich antworten, damit der Ping sichtbar ist
             await interaction.response.send_message(random.choice(GIRLBOSS_MESSAGES))
-            logger.info("Girlboss: Nachricht gesendet für %s (%s): %s", interaction.user, uid)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Message sent",
+                interaction.user,
+                uid,
+                command="/girlboss",
+            )
 
         except Exception as e:
-            logger.exception("Girlboss: Fehler bei %s: %s", interaction.user, e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Execution failed",
+                interaction.user,
+                uid,
+                command="/girlboss",
+                error=e,
+                exc_info=True,
+            )
             # sichere Fallback-Antwort
             if interaction.response.is_done():
                 await interaction.followup.send("Heute kein Girlbossen :/", ephemeral=True)

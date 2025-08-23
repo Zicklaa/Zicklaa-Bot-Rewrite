@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 from discord.ext import commands
 from discord import app_commands
 
+from utils.logging_helper import log_event
+
 logger = logging.getLogger("ZicklaaBotRewrite.Buli")
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -140,12 +142,30 @@ class Buli(commands.Cog):
                                 md_max, current_md=start_md)
 
             await interaction.response.send_message(embed=embed, view=view)
-            logger.info(
-                f"Buli-Embed gesendet an {interaction.user} (ID: {interaction.user.id}), Start-Spieltag={start_md}")
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Matchday embed sent",
+                interaction.user,
+                interaction.user.id,
+                command="/buli",
+                matchday=start_md,
+            )
 
         except Exception as e:
             await interaction.response.send_message("❌ Klappt nit lol 🤷", ephemeral=True)
-            logger.exception(f"Buli von {interaction.user.name}: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Buli command failed",
+                interaction.user,
+                interaction.user.id,
+                command="/buli",
+                error=e,
+                exc_info=True,
+            )
 
     @app_commands.command(name="tabelle", description="Zeigt die aktuelle Bundesliga-Tabelle (mit Cache & hübscher Formatierung).")
     @app_commands.describe(refresh="Ignoriere Cache und lade neu (kann Rate Limit belasten).")
@@ -167,8 +187,16 @@ class Buli(commands.Cog):
 
             if use_cache:
                 await interaction.response.send_message(embed=self._table_embed)
-                logger.info(
-                    "Tabelle aus Cache gesendet (gültig bis %s).", self._table_cached_until)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Table from cache",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/tabelle",
+                    cache_until=self._table_cached_until,
+                )
                 return
 
             # „Frisch“ laden
@@ -188,15 +216,33 @@ class Buli(commands.Cog):
                 timedelta(seconds=TABLE_TTL_SECONDS)
 
             await interaction.followup.send(embed=embed)
-            logger.info("Tabelle frisch geladen und gecached bis %s.",
-                        self._table_cached_until)
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Table refreshed",
+                interaction.user,
+                interaction.user.id,
+                command="/tabelle",
+                cache_until=self._table_cached_until,
+            )
 
         except Exception as e:
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Tabelle derzeit nicht verfügbar.", ephemeral=True)
             else:
                 await interaction.response.send_message("❌ Tabelle derzeit nicht verfügbar.", ephemeral=True)
-            logger.exception("Fehler beim Laden der Tabelle: %s", e)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Table load failed",
+                interaction.user,
+                interaction.user.id,
+                command="/tabelle",
+                error=e,
+                exc_info=True,
+            )
 
     async def update_embed(
         self,
@@ -240,8 +286,15 @@ class Buli(commands.Cog):
                             f"⏳ Bitte warte noch **{seconds}s**, bevor du erneut refreshst.",
                             ephemeral=True,
                         )
-                        logger.info(
-                            f"Refresh-Cooldown aktiv für Spieltag {matchday}: {seconds}s verbleibend.")
+                        log_event(
+                            logger,
+                            logging.INFO,
+                            self.__class__.__name__,
+                            "Refresh cooldown",
+                            interaction.user,
+                            interaction.user.id,
+                            command="/buli", matchday=matchday, seconds=seconds,
+                        )
                         return
 
                     # Erlaubt → 1 API-Call + Cooldown setzen
@@ -250,8 +303,17 @@ class Buli(commands.Cog):
                     self._md_date_range[matchday] = date_range
                     self._refresh_cooldown_until[matchday] = now + \
                         timedelta(seconds=REFRESH_COOLDOWN_SECONDS)
-                    logger.info(
-                        f"Refresh vom aktuellen Spieltag {matchday}: 1 API-Call. Nächster Refresh ab {self._refresh_cooldown_until[matchday].isoformat()}")
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        self.__class__.__name__,
+                        "Refresh performed",
+                        interaction.user,
+                        interaction.user.id,
+                        command="/buli",
+                        matchday=matchday,
+                        next_refresh=self._refresh_cooldown_until[matchday].isoformat(),
+                    )
                 else:
                     # Kein Refresh oder nicht aktueller Spieltag → Cache nutzen
                     fixtures = self._md_cache.get(matchday) or []
@@ -262,8 +324,16 @@ class Buli(commands.Cog):
                 fixtures, date_range = fetch_matchday(session, matchday)
                 self._md_cache[matchday] = fixtures
                 self._md_date_range[matchday] = date_range
-                logger.info(
-                    f"Fallback-Fetch für Spieltag {matchday}: 1 API-Call.")
+                log_event(
+                    logger,
+                    logging.INFO,
+                    self.__class__.__name__,
+                    "Fallback fetch",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/buli",
+                    matchday=matchday,
+                )
 
             embed = build_embed(matchday, fixtures, date_range)
             view = MatchdayView(self, matchday, md_min,
@@ -277,15 +347,33 @@ class Buli(commands.Cog):
 
             action = "Refresh (live)" if (refresh and matchday == self._next_matchday) else (
                 "Navigation (Cache)" if use_cache_only else "Update")
-            logger.info(
-                f"{action} für Spieltag {matchday} von {interaction.user}")
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                action,
+                interaction.user,
+                interaction.user.id,
+                command="/buli",
+                matchday=matchday,
+            )
 
         except Exception as e:
             if interaction.response.is_done():
                 await interaction.followup.send("❌ Fehler beim Aktualisieren.", ephemeral=True)
             else:
                 await interaction.response.send_message("❌ Fehler beim Aktualisieren.", ephemeral=True)
-            logger.exception(f"Update Embed Error: {e}")
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Update embed failed",
+                interaction.user,
+                interaction.user.id,
+                command="/buli",
+                error=e,
+                exc_info=True,
+            )
 
     # -------------------- Cache/Init --------------------
 
@@ -321,8 +409,15 @@ class Buli(commands.Cog):
         self._next_matchday = determine_next_matchday_from_all(matches)
         self._cache_ready = True
 
-        logger.info(
-            f"Cache geladen: {len(self._md_cache)} Spieltage, Bounds={self._md_min}-{self._md_max}, next={self._next_matchday}")
+        log_event(
+            logger,
+            logging.INFO,
+            self.__class__.__name__,
+            "Cache built",
+            matchdays=len(self._md_cache),
+            bounds=f"{self._md_min}-{self._md_max}",
+            next_matchday=self._next_matchday,
+        )
 
 # -------------------- Gruppierung & Embed --------------------
 
