@@ -136,13 +136,6 @@ class ZicklaaBotRewrite(commands.Bot):
                 continue
             ext = f"commands.{file.stem}"
             await self.load_extension(ext)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "extension_loaded",
-                extension=ext,
-            )
 
         # 1) Nur auf erlaubten Guilds registrieren
         ALLOWED_GUILDS = [122739462210846721, 567050382920908801]

@@ -21,7 +21,8 @@ for loc in ("de_DE.utf8", "de_DE.UTF-8", "de_DE", "deu_deu", "German_Germany"):
         continue
 
 # Fallback-Maps, falls Locale nicht gesetzt werden konnte
-WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+WEEKDAYS_DE = ["Montag", "Dienstag", "Mittwoch",
+               "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS_DE = [
     "Januar", "Februar", "März", "April", "Mai", "Juni",
     "Juli", "August", "September", "Oktober", "November", "Dezember"

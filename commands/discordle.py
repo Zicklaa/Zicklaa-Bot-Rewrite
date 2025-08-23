@@ -105,37 +105,46 @@ channel_ids: Dict[int, int] = {
     860154286141997056: 1625148000,
 }
 ext_list: Sequence[str] = (
-    "3g2","3gp","amv","asf","avi","gifv","m4p","m4v","mov",
-    "mp2","mp4","mpeg","mpg","webm","mp3"
+    "3g2", "3gp", "amv", "asf", "avi", "gifv", "m4p", "m4v", "mov",
+    "mp2", "mp4", "mpeg", "mpg", "webm", "mp3"
 )
 
 # --- Helpers -------------------------------------------------------------
+
 
 def random_date_since(unix_start: int) -> datetime:
     current = int(time.time())
     stamp = random.randint(unix_start, current)
     return datetime.fromtimestamp(stamp)
 
+
 def is_allowed_author(uid: int) -> bool:
     return uid in user_list and uid not in unerwuenscht
+
 
 async def fetch_random_messages(ch: discord.TextChannel, around: datetime, limit=100):
     return [m async for m in ch.history(limit=limit, around=around)]
 
-def pick_candidates(correct: str, pool: Iterable[str], k: int=4) -> List[str]:
+
+def pick_candidates(correct: str, pool: Iterable[str], k: int = 4) -> List[str]:
     cands = {correct}
-    pool_list = list(pool); random.shuffle(pool_list)
+    pool_list = list(pool)
+    random.shuffle(pool_list)
     for name in pool_list:
-        if len(cands) >= k: break
+        if len(cands) >= k:
+            break
         cands.add(name)
-    result = list(cands); random.shuffle(result)
+    result = list(cands)
+    random.shuffle(result)
     return result
+
 
 def is_image_like(url: str) -> bool:
     return not any(url.lower().endswith("." + ext) for ext in ext_list)
 
+
 async def add_guess_reactions(msg: discord.Message):
-    for emoji in ["1️⃣","2️⃣","3️⃣","4️⃣","❌"]:
+    for emoji in ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "❌"]:
         try:
             await msg.add_reaction(emoji)
         except Exception as e:
@@ -151,6 +160,7 @@ async def add_guess_reactions(msg: discord.Message):
 
 # --- Embeds --------------------------------------------------------------
 
+
 def build_text_embed(ctx_user: str, message: discord.Message, candidates: Sequence[str]):
     e = discord.Embed(
         title="Discordle",
@@ -163,16 +173,22 @@ def build_text_embed(ctx_user: str, message: discord.Message, candidates: Sequen
     )
     e.set_footer(text=f"Discordle by: {ctx_user}")
     e.add_field(name="**Runde 1**", value=message.content, inline=False)
-    e.add_field(name="**Runde 2**", value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
+    e.add_field(name="**Runde 2**",
+                value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
     e.add_field(name="**Runde 3**",
-                value="||#" + str(message.channel).ljust(random.randint(25,50), "\u2000")+"||",
+                value="||#" +
+                str(message.channel).ljust(
+                    random.randint(25, 50), "\u2000")+"||",
                 inline=False)
-    e.add_field(name="**Runde 4**", value="||" + "\n".join(candidates) + "||", inline=False)
+    e.add_field(name="**Runde 4**", value="||" +
+                "\n".join(candidates) + "||", inline=False)
     e.add_field(name="**Auflösung**",
-                value="||" + str(message.author).ljust(random.randint(25,50), "\u2000")
-                      + f"\n[Link zur Nachricht]({message.jump_url})||",
+                value="||" +
+                str(message.author).ljust(random.randint(25, 50), "\u2000")
+                + f"\n[Link zur Nachricht]({message.jump_url})||",
                 inline=False)
     return e
+
 
 def build_image_embed(ctx_user: str, message: discord.Message, img_url: str, candidates: Sequence[str]):
     e = discord.Embed(
@@ -187,56 +203,73 @@ def build_image_embed(ctx_user: str, message: discord.Message, img_url: str, can
     e.set_footer(text=f"Discordle by: {ctx_user}")
     e.set_image(url=img_url)
     e.add_field(name="**Runde 1**", value="Siehe Bild", inline=False)
-    e.add_field(name="**Runde 2**", value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
+    e.add_field(name="**Runde 2**",
+                value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
     e.add_field(name="**Runde 3**",
-                value="||#" + str(message.channel).ljust(random.randint(25,50), "\u2000")+"||",
+                value="||#" +
+                str(message.channel).ljust(
+                    random.randint(25, 50), "\u2000")+"||",
                 inline=False)
-    e.add_field(name="**Runde 4**", value="||" + "\n".join(candidates) + "||", inline=False)
+    e.add_field(name="**Runde 4**", value="||" +
+                "\n".join(candidates) + "||", inline=False)
     e.add_field(name="**Auflösung**",
-                value="||" + str(message.author).ljust(random.randint(25,50), "\u2000")
-                      + f"\n[Link zur Nachricht]({message.jump_url})||",
+                value="||" +
+                str(message.author).ljust(random.randint(25, 50), "\u2000")
+                + f"\n[Link zur Nachricht]({message.jump_url})||",
                 inline=False)
     return e
 
 # --- Cog ----------------------------------------------------------------
 
+
 @dataclass
 class ChannelSource:
-    cid: int; start: int
+    cid: int
+    start: int
+
 
 class Discordle(commands.Cog):
     def __init__(self, bot: commands.Bot):
-        self.bot=bot
-        self.sources=[ChannelSource(cid,s) for cid,s in channel_ids.items()]
-        self.usernames=list(user_list.values())
+        self.bot = bot
+        self.sources = [ChannelSource(cid, s)
+                        for cid, s in channel_ids.items()]
+        self.usernames = list(user_list.values())
 
-    async def _pick_channel(self)->Optional[discord.TextChannel]:
-        src=random.choice(self.sources)
-        ch=self.bot.get_channel(src.cid)
-        if isinstance(ch,discord.TextChannel): return ch
+    async def _pick_channel(self) -> Optional[discord.TextChannel]:
+        src = random.choice(self.sources)
+        ch = self.bot.get_channel(src.cid)
+        if isinstance(ch, discord.TextChannel):
+            return ch
         try:
-            ch=await self.bot.fetch_channel(src.cid)
-            return ch if isinstance(ch,discord.TextChannel) else None
-        except: return None
+            ch = await self.bot.fetch_channel(src.cid)
+            return ch if isinstance(ch, discord.TextChannel) else None
+        except:
+            return None
 
-    async def _pick_text_msg(self)->Optional[discord.Message]:
+    async def _pick_text_msg(self) -> Optional[discord.Message]:
         for _ in range(8):
-            ch=await self._pick_channel()
-            if not ch: continue
-            around=random_date_since(channel_ids.get(ch.id,int(time.time())))
-            msgs=await fetch_random_messages(ch,around,100); random.shuffle(msgs)
+            ch = await self._pick_channel()
+            if not ch:
+                continue
+            around = random_date_since(
+                channel_ids.get(ch.id, int(time.time())))
+            msgs = await fetch_random_messages(ch, around, 100)
+            random.shuffle(msgs)
             for m in msgs:
                 if (m.content and is_allowed_author(m.author.id)
-                    and 5 < len(m.content.split()) < 50):
+                        and 5 < len(m.content.split()) < 50):
                     return m
         return None
 
-    async def _pick_image_msg(self)->Optional[Tuple[discord.Message,str]]:
+    async def _pick_image_msg(self) -> Optional[Tuple[discord.Message, str]]:
         for _ in range(8):
-            ch=await self._pick_channel()
-            if not ch: continue
-            around=random_date_since(channel_ids.get(ch.id,int(time.time())))
-            msgs=await fetch_random_messages(ch,around,100); random.shuffle(msgs)
+            ch = await self._pick_channel()
+            if not ch:
+                continue
+            around = random_date_since(
+                channel_ids.get(ch.id, int(time.time())))
+            msgs = await fetch_random_messages(ch, around, 100)
+            random.shuffle(msgs)
             for m in msgs:
                 if is_allowed_author(m.author.id) and m.attachments:
                     for att in m.attachments:
@@ -244,32 +277,33 @@ class Discordle(commands.Cog):
                             return m, att.url
         return None
 
-    @app_commands.command(name="discordle",description="Starte eine Discordle-Runde (Text).")
-    async def cmd_dc(self, interaction:discord.Interaction):
+    @app_commands.command(name="discordle", description="Starte eine Discordle-Runde (Text).")
+    async def cmd_dc(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
-        msg=await self._pick_text_msg()
+        msg = await self._pick_text_msg()
         if not msg:
             await interaction.followup.send("Was ist denn mit Karsten los??")
             return
-        cands=pick_candidates(str(msg.author), self.usernames,4)
-        emb=build_text_embed(interaction.user.display_name,msg,cands)
-        out=await interaction.followup.send(embed=emb)
+        cands = pick_candidates(str(msg.author), self.usernames, 4)
+        emb = build_text_embed(interaction.user.display_name, msg, cands)
+        out = await interaction.followup.send(embed=emb)
         await add_guess_reactions(out)
 
-    @app_commands.command(name="bildcordle",description="Starte eine Bildcordle-Runde (Bild).")
-    async def cmd_bc(self, interaction:discord.Interaction):
+    @app_commands.command(name="bildcordle", description="Starte eine Bildcordle-Runde (Bild).")
+    async def cmd_bc(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
-        found=await self._pick_image_msg()
+        found = await self._pick_image_msg()
         if not found:
             await interaction.followup.send("Was ist denn mit Karsten los??")
             return
-        msg,url=found
-        cands=pick_candidates(str(msg.author), self.usernames,4)
-        emb=build_image_embed(interaction.user.display_name,msg,url,cands)
-        out=await interaction.followup.send(embed=emb)
+        msg, url = found
+        cands = pick_candidates(str(msg.author), self.usernames, 4)
+        emb = build_image_embed(interaction.user.display_name, msg, url, cands)
+        out = await interaction.followup.send(embed=emb)
         await add_guess_reactions(out)
 
 # --- Setup ---------------------------------------------------------------
 
-async def setup(bot:commands.Bot):
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(Discordle(bot))

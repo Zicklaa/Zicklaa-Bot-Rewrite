@@ -312,7 +312,8 @@ class Buli(commands.Cog):
                         interaction.user.id,
                         command="/buli",
                         matchday=matchday,
-                        next_refresh=self._refresh_cooldown_until[matchday].isoformat(),
+                        next_refresh=self._refresh_cooldown_until[matchday].isoformat(
+                        ),
                     )
                 else:
                     # Kein Refresh oder nicht aktueller Spieltag → Cache nutzen
@@ -385,7 +386,8 @@ class Buli(commands.Cog):
             raise RuntimeError("Keine Spiele für laufende Saison gefunden.")
 
         # md_min/md_max
-        mds = [m.get("matchday") for m in matches if isinstance(m.get("matchday"), int)]
+        mds = [m.get("matchday")
+               for m in matches if isinstance(m.get("matchday"), int)]
         self._md_min, self._md_max = (min(mds), max(mds)) if mds else (1, 34)
 
         # matchday -> list[matches], sortiert
@@ -405,11 +407,6 @@ class Buli(commands.Cog):
         # „nächsten/aktuellen“ Spieltag bestimmen
         self._next_matchday = determine_next_matchday_from_all(matches)
         self._cache_ready = True
-
-        logger.info(
-            "Full-Refresh: Cache neu geladen (%d Spieltage), Bounds=%s-%s, next=%s",
-            len(self._md_cache), self._md_min, self._md_max, self._next_matchday,
-        )
 
     async def _ensure_cache(self, session: requests.Session):
         """Lädt einmalig alle Spiele der Saison und füllt den Matchday-Cache (1 API-Call)."""

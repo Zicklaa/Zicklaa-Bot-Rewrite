@@ -70,6 +70,7 @@ GIRLBOSSES: tuple[int, ...] = (
 
 # -------------------- Cog --------------------
 
+
 class Girlboss(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -130,6 +131,7 @@ class Girlboss(commands.Cog):
                 await interaction.response.send_message("Heute kein Girlbossen :/", ephemeral=True)
 
 # -------------------- Setup --------------------
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Girlboss(bot))

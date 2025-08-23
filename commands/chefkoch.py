@@ -78,10 +78,12 @@ class Chefkoch(commands.Cog):
                 )
                 return
 
-            await interaction.response.defer(thinking=True)  # falls API mal langsamer ist
+            # falls API mal langsamer ist
+            await interaction.response.defer(thinking=True)
 
             suche = Search(query)
-            results: list[Recipe] = list(suche.recipes(limit=MAX_RESULTS_PICK))  # type: ignore
+            results: list[Recipe] = list(suche.recipes(
+                limit=MAX_RESULTS_PICK))  # type: ignore
 
             if not results:
                 await interaction.followup.send("😕 Keine Rezepte gefunden. Versuch andere Begriffe.")

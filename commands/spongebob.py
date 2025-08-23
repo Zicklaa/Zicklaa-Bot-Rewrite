@@ -78,7 +78,8 @@ class Spongebob(commands.Cog):
     )
     async def randomsponge(self, interaction: discord.Interaction, text: str):
         try:
-            spongified_text = "".join(random.choice((str.upper, str.lower))(c) for c in text)
+            spongified_text = "".join(random.choice(
+                (str.upper, str.lower))(c) for c in text)
 
             embed = discord.Embed(
                 description=f"**{spongified_text}**",

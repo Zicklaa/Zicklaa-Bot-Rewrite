@@ -57,7 +57,8 @@ class Admin(commands.Cog):
         choices = []
         for ext in _available_extensions():
             # nur die Endkomponente anzeigen (freundlicher), value bleibt vollqualifiziert
-            label = ext.split(".", 1)[1] if ext.startswith("commands.") else ext
+            label = ext.split(".", 1)[1] if ext.startswith(
+                "commands.") else ext
             if current_lower in label.lower():
                 choices.append(app_commands.Choice(name=label, value=ext))
             if len(choices) >= 25:  # Discord-Limit
@@ -316,7 +317,7 @@ class Admin(commands.Cog):
                 interaction.user.id,
                 command="/sync",
             )
-            
+
             await interaction.response.send_message(
                 f"✅ Slash-Commands für {len(GUILD_IDS)} Guild(s) synchronisiert.",
                 ephemeral=True

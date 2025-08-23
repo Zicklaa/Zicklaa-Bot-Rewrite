@@ -71,7 +71,7 @@ class Star(commands.Cog):
             if ext in EXT_LIST:
                 # Video → nur Link
                 if ext in ["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm",
-                            "mpeg", "mpg", "3gp", "3g2", "m4v", "ogv", "asf", "amv"]:
+                           "mpeg", "mpg", "3gp", "3g2", "m4v", "ogv", "asf", "amv"]:
                     embed.add_field(
                         name="Link zum Video:",
                         value=f"[Video]({att.url})",
@@ -128,7 +128,6 @@ class Star(commands.Cog):
         embed.set_footer(text=f"{time_str} | #{message.channel.name}")
 
         return embed
-
 
     async def post_star(self, message: discord.Message):
         """Postet die Stern-Nachricht ins Sternbrett + DB-Eintrag."""

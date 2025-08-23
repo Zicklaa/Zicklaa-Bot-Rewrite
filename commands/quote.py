@@ -62,10 +62,13 @@ class Quote(commands.Cog):
         channel = self._resolve_channel(guild_id, channel_id)
         if channel is None:
             # Notfalls hart fetchen (falls nicht im Cache / andere Guild)
-            channel = await self.bot.fetch_channel(channel_id)  # kann Forbidden werfen
-        assert isinstance(channel, (discord.TextChannel, discord.Thread)), "Nur Textkanäle/Threads werden unterstützt."
+            # kann Forbidden werfen
+            channel = await self.bot.fetch_channel(channel_id)
+        assert isinstance(channel, (discord.TextChannel, discord.Thread)
+                          ), "Nur Textkanäle/Threads werden unterstützt."
 
-        message = await channel.fetch_message(msg_id)  # kann NotFound/Forbidden werfen
+        # kann NotFound/Forbidden werfen
+        message = await channel.fetch_message(msg_id)
 
         # Beschreibung beschneiden, damit wir nie über 4096 kommen
         content = (message.content or "").strip()

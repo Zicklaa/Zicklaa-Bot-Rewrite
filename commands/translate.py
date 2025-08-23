@@ -45,11 +45,13 @@ class Translate(commands.Cog):
     async def cog_load(self):
         def _load_langs() -> LangTables:
             try:
-                raw = GoogleTranslator.get_supported_languages(as_dict=True)  # type: ignore[attr-defined]
+                raw = GoogleTranslator.get_supported_languages(
+                    as_dict=True)  # type: ignore[attr-defined]
             except TypeError:
                 raw = GoogleTranslator().get_supported_languages(as_dict=True)
 
-            name_to_code = {normalize(name): normalize(code) for name, code in raw.items()}
+            name_to_code = {normalize(name): normalize(code)
+                            for name, code in raw.items()}
             aliases = {"deutsch": "de", "englisch": "en", "german": "de", "english": "en",
                        "chinese": "zh-cn", "chinesisch": "zh-cn", "brazilian portuguese": "pt"}
             for k, v in aliases.items():
@@ -59,7 +61,8 @@ class Translate(commands.Cog):
             for name, code in name_to_code.items():
                 code_to_name.setdefault(code, name)
 
-            all_display = sorted(set(list(name_to_code.keys()) + list(code_to_name.keys())))
+            all_display = sorted(
+                set(list(name_to_code.keys()) + list(code_to_name.keys())))
             return LangTables(name_to_code, code_to_name, all_display)
 
         self.langs = await asyncio.to_thread(_load_langs)
@@ -84,23 +87,27 @@ class Translate(commands.Cog):
             return []
         cur = normalize(current)
         if not cur:
-            seeds = ["de", "en", "fr", "es", "it", "tr", "nl", "pl", "pt", "ru"]
+            seeds = ["de", "en", "fr", "es", "it",
+                     "tr", "nl", "pl", "pt", "ru"]
             return [app_commands.Choice(name=f"{code} — {self.langs.code_to_name.get(code, code)}", value=code) for code in seeds]
         choices: List[app_commands.Choice[str]] = []
         for token in self.langs.all_display:
             if cur in token:
-                code = token if token in self.langs.code_to_name else self.langs.name_to_code.get(token, token)
+                code = token if token in self.langs.code_to_name else self.langs.name_to_code.get(
+                    token, token)
                 name = self.langs.code_to_name.get(code, code)
                 label = f"{code} — {name}"
                 if all(c.value != code for c in choices):
-                    choices.append(app_commands.Choice(name=label[:100], value=code))
+                    choices.append(app_commands.Choice(
+                        name=label[:100], value=code))
             if len(choices) >= 25:
                 break
         return choices
 
     async def translate_text(self, text: str, target: str, source: str) -> Tuple[str, str]:
         def _work():
-            trans = GoogleTranslator(source=source, target=target).translate(text)
+            trans = GoogleTranslator(
+                source=source, target=target).translate(text)
             return trans, source
         return await asyncio.to_thread(_work)
 
@@ -149,8 +156,10 @@ class Translate(commands.Cog):
                 title=f"{flag(src_code)} {src_name} → {flag(dst_code)} {dst_name}",
                 color=discord.Color.green(),
             )
-            embed.add_field(name="Original", value=text[:1000] + ("…" if len(text) > 1000 else ""), inline=False)
-            embed.add_field(name="Übersetzung", value=translated[:1000] + ("…" if len(translated) > 1000 else ""), inline=False)
+            embed.add_field(
+                name="Original", value=text[:1000] + ("…" if len(text) > 1000 else ""), inline=False)
+            embed.add_field(name="Übersetzung", value=translated[:1000] + (
+                "…" if len(translated) > 1000 else ""), inline=False)
             embed.set_footer(text="Google Translate")
 
             await interaction.followup.send(embed=embed)

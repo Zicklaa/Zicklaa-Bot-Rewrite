@@ -501,8 +501,6 @@ class RemindMe(commands.Cog):
             )
             new_id = self.cursor.fetchall()[0][0]
 
-            logger.info("Neuer Reminder in die DB gepusht: %s", new_id)
-
             reminder._id = new_id
             log_event(
                 logger,
@@ -526,7 +524,6 @@ class RemindMe(commands.Cog):
                 error=e,
                 exc_info=True,
             )
-
 
     async def send_reminder(self, reminder: Reminder):
         """Sendet einen fälligen Reminder und löscht ihn danach."""
@@ -591,7 +588,6 @@ class RemindMe(commands.Cog):
                 exc_info=True,
             )
 
-
     async def check_reminder_exists(self, reminder: Reminder):
         """Prüft, ob ein Reminder noch in der Datenbank existiert."""
         try:
@@ -640,7 +636,6 @@ class RemindMe(commands.Cog):
                 error=e,
                 exc_info=True,
             )
-
 
 
 # ============================================================================

@@ -24,7 +24,8 @@ class Fav(commands.Cog):
     # ------------------------------------------------------
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: RawReactionActionEvent):
-        message_id, channel_id, emoji, user_id = self.parse_raw_reaction_event(payload)
+        message_id, channel_id, emoji, user_id = self.parse_raw_reaction_event(
+            payload)
 
         # 🗑️ = Delete Fav
         if str(emoji) == "🗑️":
@@ -42,7 +43,8 @@ class Fav(commands.Cog):
                             "SELECT * FROM favs WHERE id=?", (fav_id,)
                         ).fetchone()
                         if fav and fav[1] == user_id:
-                            self.cursor.execute("DELETE FROM favs WHERE id=?", (fav_id,))
+                            self.cursor.execute(
+                                "DELETE FROM favs WHERE id=?", (fav_id,))
                             self.db.commit()
                             log_event(
                                 logger,
@@ -144,7 +146,8 @@ class Fav(commands.Cog):
                     channel = self.bot.get_channel(fav[4])
                     fav_message = await channel.fetch_message(fav[2])
 
-                    current_time = fav_message.created_at.astimezone(tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
+                    current_time = fav_message.created_at.astimezone(
+                        tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
 
                     content = fav_message.content
                     if not content:
@@ -154,9 +157,10 @@ class Fav(commands.Cog):
                         title="",
                         description=content,
                         color=0x00FF00
-)
+                    )
                     if fav_message.attachments:
-                        embed.set_image(url=str(fav_message.attachments[0].url))
+                        embed.set_image(
+                            url=str(fav_message.attachments[0].url))
 
                     embed.set_author(
                         name=fav_message.author.name,
@@ -214,19 +218,22 @@ class Fav(commands.Cog):
     @commands.hybrid_command(description="Zeige einen zufälligen Fav von allen Usern.")
     async def rfav(self, ctx):
         try:
-            fav = self.cursor.execute("SELECT * FROM favs ORDER BY RANDOM()").fetchone()
+            fav = self.cursor.execute(
+                "SELECT * FROM favs ORDER BY RANDOM()").fetchone()
             if fav:
                 try:
                     channel = self.bot.get_channel(fav[4])
                     fav_message = await channel.fetch_message(fav[2])
 
-                    current_time = fav_message.created_at.astimezone(tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
+                    current_time = fav_message.created_at.astimezone(
+                        tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
 
                     embed = discord.Embed(
                         title="", description=fav_message.content, color=0x00FF00
                     )
                     if fav_message.attachments:
-                        embed.set_image(url=str(fav_message.attachments[0].url))
+                        embed.set_image(
+                            url=str(fav_message.attachments[0].url))
 
                     embed.set_author(
                         name=fav_message.author.name,
@@ -313,7 +320,8 @@ class Fav(commands.Cog):
                         channel = self.bot.get_channel(fav[4])
                         fav_message = await channel.fetch_message(fav[2])
 
-                        current_time = fav_message.created_at.astimezone(tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
+                        current_time = fav_message.created_at.astimezone(
+                            tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
                         author = fav_message.author.name
                         text = fav_message.content
                         bottom_text = (
