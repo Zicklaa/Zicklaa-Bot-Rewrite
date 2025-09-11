@@ -18,7 +18,7 @@ am = discord.AllowedMentions(
 )
 
 # Satz-Generierungs-Parameter
-ratio = 0.75
+ratio = 0.6
 SPAM_CHANNEL_ID = 528742785935998979
 
 # -------------------- Cog-Klasse --------------------
@@ -97,7 +97,6 @@ class Hivemind(commands.Cog):
                         )
                         break
 
-            # Den „denkt…“-Stub wieder weg
             try:
                 await interaction.delete_original_response()
             except Exception:

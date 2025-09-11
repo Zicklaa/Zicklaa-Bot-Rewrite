@@ -44,7 +44,8 @@ def create_log_file(path: str) -> logging.Logger:
     logger = logging.getLogger("ZicklaaBotRewrite")
     logger.setLevel(logging.INFO)
     handler = TimedRotatingFileHandler(
-        path, when="midnight", interval=1, backupCount=5)
+        path, when="midnight", interval=1, backupCount=5
+    )
     formatter = logging.Formatter(
         "%(asctime)s::%(name)s::%(funcName)s::%(levelname)s - %(message)s"
     )
@@ -53,28 +54,36 @@ def create_log_file(path: str) -> logging.Logger:
     return logger
 
 
-logger = create_log_file(os.path.join(
-    globalPfad, "Old Logs/ZicklaaBotRewriteLog.log"))
+logger = create_log_file(
+    os.path.join(globalPfad, "Old Logs/ZicklaaBotRewriteLog.log")
+)
 
 # -------------------- Datenbank & Modelle --------------------
 
 
 def json_model():
     """Lädt das Markov-Modell aus einer JSON-Datei."""
-    with open(os.path.join(globalPfad, "static/hivemind.json"), encoding="utf-8") as json_file:
+    with open(
+        os.path.join(globalPfad, "static/hivemind.json"), encoding="utf-8"
+    ) as json_file:
         hivemind_json = json.load(json_file)
     model = markovify.Text.from_json(hivemind_json)
     print("hivemind.json loaded")
     return model
+
 
 # -------------------- Bot-Klasse --------------------
 
 
 class ZicklaaBotRewrite(commands.Bot):
     def __init__(self) -> None:
-        super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents)
-        self.db = sqlite3.connect(os.path.join(
-            globalPfad, "reminder-wishlist.db"))
+        super().__init__(
+            command_prefix=commands.when_mentioned_or("+"),  # Prefix = "+"
+            intents=intents,
+        )
+        self.db = sqlite3.connect(
+            os.path.join(globalPfad, "reminder-wishlist.db")
+        )
         self.create_tables()
         self.json_model = json_model()
 
@@ -83,7 +92,8 @@ class ZicklaaBotRewrite(commands.Bot):
         try:
             cursor = self.db.cursor()
             # Reminders
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS reminders(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -92,24 +102,32 @@ class ZicklaaBotRewrite(commands.Bot):
                     channel INTEGER,
                     message_id INTEGER
                 )
-            """)
+            """
+            )
             reminder_columns = [
-                x[1] for x in cursor.execute("PRAGMA table_info(reminders)").fetchall()
+                x[1]
+                for x in cursor.execute(
+                    "PRAGMA table_info(reminders)"
+                ).fetchall()
             ]
             if "parent_id" not in reminder_columns:
                 cursor.execute(
-                    "ALTER TABLE reminders ADD COLUMN parent_id INTEGER")
+                    "ALTER TABLE reminders ADD COLUMN parent_id INTEGER"
+                )
             # Wishlist
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS wishlist(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     wishtext TEXT,
                     ts TEXT
                 )
-            """)
+            """
+            )
             # Favs
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS favs(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -117,14 +135,17 @@ class ZicklaaBotRewrite(commands.Bot):
                     name TEXT,
                     channel_id INTEGER
                 )
-            """)
+            """
+            )
             # Stars
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS stars(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     message_id INTEGER
                 )
-            """)
+            """
+            )
         except Exception as e:
             logging.error(f"Fehler beim Erstellen der Tabellen: {e}")
 
@@ -162,8 +183,8 @@ class ZicklaaBotRewrite(commands.Bot):
             "slash_commands_cleared_global",
         )
 
-# -------------------- Bot-Instanz --------------------
 
+# -------------------- Bot-Instanz --------------------
 
 bot = ZicklaaBotRewrite()
 
@@ -198,12 +219,21 @@ async def is_on_cooldown(ctx):
 
 @bot.event
 async def on_message(message):
-    """Reagiert auf bestimmte Nachrichten mit zufälliger Wahrscheinlichkeit."""
-    if message.author.id == 1407707429176873093:
+    """Reagiert auf bestimmte Nachrichten mit zufälliger Wahrscheinlichkeit + verarbeitet Prefix-Commands."""
+    if message.author.id == 1407707429176873093 or message.author.bot:
         return
 
+    # 1) IMMER zuerst Commands verarbeiten
+    await bot.process_commands(message)
+
+    # 2) Wenn es ein Command war (Prefix oder Mention), keine Autoresponse
+    if message.content.startswith("+") or message.content.startswith(
+        f"<@{bot.user.id}>"
+    ) or message.content.startswith(f"<@!{bot.user.id}>"):
+        return
+
+    # 3) Ab hier deine Random-Antworten
     if random.random() >= float(os.environ["SECRET_PROBABILITY"]):
-        await bot.process_commands(message)
         return
 
     content = message.content.lower()
@@ -290,12 +320,14 @@ async def on_command_error(ctx, error):
             exc_info=True,
         )
 
+
 # -------------------- Main --------------------
 
 
 async def main():
     async with bot:
         await bot.start(TOKEN)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
