@@ -472,6 +472,88 @@ class Chat(commands.Cog):
 
     # ==== Image Commands ====
 
+    @image.command(name="pipeline", description="HD Bild mit optimiertem Prompt (NSFW, automatisch Spoiler).")
+    @app_commands.describe(text="Dein kurzer Input (deutsch ok, ich optimiere ihn).")
+    async def image_pipeline(self, interaction: discord.Interaction, text: str):
+        """
+        Nimmt kurzen User-Input, baut daraus einen kompakten, präzisen EN-Bildprompt
+        und generiert ein HD-NSFW Bild (automatisch mit Spoiler-Tag).
+        """
+        if not await self._ensure_allowed(interaction):
+            return
+        await interaction.response.defer(thinking=True)
+
+        # Prompt-Optimierung (kompakt, englisch, bildgenerator-freundlich)
+        system_preprompt = (
+            "You are a prompt optimizer for image generation. "
+            "Given a short user idea, produce ONE concise yet vivid English prompt "
+            "that fully captures the scene, subjects, background, lighting, colors, "
+            "textures, camera/composition, mood/emotion, and relevant style keywords. "
+            "Be specific but not verbose; avoid lists and meta-commentary. "
+            "Return ONLY the final prompt text in English."
+        )
+
+        try:
+            completion = await self.oai.chat.completions.create(
+                model="gpt-5-mini",
+                messages=[
+                    {"role": "system", "content": system_preprompt},
+                    {"role": "user", "content": text},
+                ],
+            )
+            optimized_prompt = (
+                completion.choices[0].message.content or "").strip()
+
+            if not optimized_prompt:
+                await interaction.followup.send(
+                    "Konnte keinen gültigen Bild-Prompt bauen. Versuch es bitte nochmal mit einer anderen Beschreibung.",
+                    ephemeral=True,
+                )
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    self.__class__.__name__,
+                    "Pipeline prompt empty",
+                    interaction.user,
+                    interaction.user.id,
+                    command="/image pipeline",
+                    raw_input=text,
+                )
+                return
+
+            # Bild erzeugen: HD + NSFW (=> Spoiler-Dateiname in _get_image_and_send)
+            await self._get_image_and_send(
+                interaction,
+                optimized_prompt,
+                quality="hd",
+                nsfw=True,
+            )
+
+            log_event(
+                logger,
+                logging.INFO,
+                self.__class__.__name__,
+                "Pipeline image generated",
+                interaction.user,
+                interaction.user.id,
+                command="/image pipeline",
+                optimized_prompt_len=len(optimized_prompt),
+            )
+
+        except Exception as e:
+            await interaction.followup.send("Fehler in /image pipeline. 🤷", ephemeral=True)
+            log_event(
+                logger,
+                logging.ERROR,
+                self.__class__.__name__,
+                "Pipeline failed",
+                interaction.user,
+                interaction.user.id,
+                command="/image pipeline",
+                error=e,
+                exc_info=True,
+            )
+
     @image.command(name="fast", description="Schnelles Bild (safe).")
     @app_commands.describe(prompt="Bildbeschreibung")
     async def image_fast(self, interaction: discord.Interaction, prompt: str):
