@@ -272,21 +272,29 @@ class Chat(commands.Cog):
         # fal_client ist sync; in Thread auslagern
         def _work():
             if quality == "fast":
-                model = "schnell"
-                num_inference_steps = 2
-            else:
-                model = "dev"
-                num_inference_steps = 28
-
-            handler = fal_client.submit(
-                f"fal-ai/flux/{model}",
-                arguments={
+                # FLUX 1.1 Pro: Sehr schnell, exzellentes Preis-Leistungs-Verhältnis
+                model = "fal-ai/flux-pro/v1.1"
+                arguments = {
                     "prompt": prompt,
-                    "num_inference_steps": num_inference_steps,
-                    "enable_safety_checker": not nsfw,
-                },
+                    "aspect_ratio": "1:1",
+                    "safety_tolerance": "6" if nsfw else "2",  # 1 = am strengsten, 6 = uncensored/NSFW erlaubt
+                }
+            else:
+                # Aktuelles High-End Flaggschiff-Modell (Pro v1.1 Ultra)
+                model = "fal-ai/flux-pro/v1.1-ultra"
+                arguments = {
+                    "prompt": prompt,
+                    "aspect_ratio": "16:9", # optional: "1:1", "16:9", "9:16"
+                    "safety_tolerance": "6" if nsfw else "2", # 6 = Uncensored/NSFW erlaubt
+                    "raw": False, # Setze auf True für noch natürlichere Fotos ohne "AI-Look"
+                }
+
+            # API Call an fal.ai
+            result = fal_client.subscribe(
+                model,
+                arguments=arguments
             )
-            result = handler.get()
+            
             image_url = result["images"][0]["url"]
             resp = requests.get(image_url, timeout=60)
             resp.raise_for_status()
