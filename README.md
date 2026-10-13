@@ -67,6 +67,8 @@ python bot.py
 - `/translate from:<sprache> to:<sprache> text:<txt>` – Übersetzung via
   GoogleTranslator.
 - `/wiki suchen|artikel|zufall` – Wikipedia‑Artikel als Embed.
+- `/statistik [privat]` – eigene Nachrichten pro Kalenderjahr als Embed mit
+  Diagramm (nur für sich selbst, gezählt über die Discord‑Suche).
 
 ### Erinnerungen
 - `/remindme in <zahl> <einheit> [text]` – erinnert nach Zeitspanne.
