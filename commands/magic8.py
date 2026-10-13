@@ -1,15 +1,15 @@
-import logging
+"""/magic8 – beantwortet eine Frage mit einer zufälligen Antwort."""
+
 import random
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog, UserError
+from utils.helpers import NO_MENTIONS
 
-logger = logging.getLogger("ZicklaaBotRewrite.Magic8")
-
-# Feste Antworten der Magic-8-Ball-Logik
-MAGIC8_ANSWERS: list[str] = [
+MAGIC8_ANSWERS: tuple[str, ...] = (
     "Zu 100% Ja!",
     "Es ist so entschieden, Ja.",
     "Ja :3 OwO",
@@ -42,80 +42,30 @@ MAGIC8_ANSWERS: list[str] = [
     "H̶͕̦̬̮̖̼̠͈̗͈̤̥̣̣̋̂̐̆̈́̊͋́͠͝i̵̢̥̻̹͉̰̟̤͔̰̾͛ͅn̴̹͈̬̝̦͇̤͍͒̅ͅť̷̨̙̣̘̗͙̞͔̳͗̆͂̑e̸̢̫̝̭̗̰̙̲̟̼̝̺͇̥͜͝r̷̛̭̣͔͚̳͑̿̈́̄͋̂̊̾͗̉̾̿͜͝͝ ̸̨̬̖̦͉͍̯̜͕͔̪̭̜͚̒d̷̟̼̯̺͔̯̱̞̊̐̆̽̑̎̚͜ĭ̵̡͙̓̏͗̈̒͐͋̐̄͝ͅr̶̭̱̫͍͙͙̻̩͓̱̍̿̾́̓̈̆̔͂̂͒̏̽͝.",
     "Nur wenn KOSCHDELOS is.",
     "Teile dieser Antwort könnte die User verunsichern.",
-]
+)
 
 
-class Magic8(commands.Cog):
-    """Cog für den Befehl /magic8 – beantwortet eine Frage zufällig."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
+class Magic8(BaseCog):
+    """Cog: /magic8 – die magische 8-Ball."""
 
     @app_commands.command(
         name="magic8",
-        description="Stelle eine Frage – die magische 8-Ball antwortet zufällig."
+        description="Stelle eine Frage – die magische 8-Ball antwortet zufällig.",
+        extras={"error": "❌ Klappt nit lol 🤷"},
     )
     @app_commands.describe(
         frage="Deine Frage an die magische 8-Ball (z. B. 'Besteht morgen die Sonne?')."
     )
     async def magic8(self, interaction: discord.Interaction, frage: str | None = None):
-        """
-        Slash-Befehl: /magic8 [frage]
-        - Wenn eine Frage angegeben ist, gibt der Bot eine zufällige Antwort zurück.
-        - Wenn keine Frage angegeben ist, fordert er freundlich dazu auf.
-        """
-        try:
-            if not frage or not frage.strip():
-                await interaction.response.send_message(
-                    "🤔 Stell mir eine Frage, damit ich sie beantworten kann!",
-                    ephemeral=True
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "No question provided",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/magic8",
-                )
-                return
+        if not frage or not frage.strip():
+            raise UserError("🤔 Stell mir eine Frage, damit ich sie beantworten kann!")
 
-            antwort = random.choice(MAGIC8_ANSWERS)
-
-            await interaction.response.send_message(
-                f"🎱 **Frage:** {frage}\n**Antwort:** {antwort}",
-                allowed_mentions=discord.AllowedMentions.none()
-            )
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Answer sent",
-                interaction.user,
-                interaction.user.id,
-                command="/magic8",
-                question=frage,
-                answer=antwort,
-            )
-
-        except Exception as e:
-            await interaction.response.send_message(
-                "❌ Klappt nit lol 🤷", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Command failed",
-                interaction.user,
-                interaction.user.id,
-                command="/magic8",
-                error=e,
-                exc_info=True,
-            )
+        antwort = random.choice(MAGIC8_ANSWERS)
+        await interaction.response.send_message(
+            f"🎱 **Frage:** {frage}\n**Antwort:** {antwort}", allowed_mentions=NO_MENTIONS
+        )
+        self.log("Answer sent", interaction, question=frage, answer=antwort)
 
 
-# Standard-Setup für discord.py 2.x
 async def setup(bot: commands.Bot):
     await bot.add_cog(Magic8(bot))

@@ -1,23 +1,12 @@
-# girlboss_cog.py
-# -*- coding: utf-8 -*-
-"""
-Girlboss-Cog (discord.py 2.x, Slash-Command)
-- /girlboss : postet eine zufällige motivierende Girlboss-Nachricht und pingt die/den Ausführenden
-- Nur bestimmte User dürfen den Command nutzen (siehe GIRLBOSSES)
-"""
-from __future__ import annotations
+"""/girlboss – postet eine zufällige motivierende Girlboss-Nachricht (nur für ausgewählte User)."""
 
-import logging
 import random
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils.logging_helper import log_event
-
-logger = logging.getLogger("ZicklaaBotRewrite.Girlboss")
-
-# -------------------- Daten --------------------
+from utils.base import BaseCog, UserError
 
 GIRLBOSS_MESSAGES: list[str] = [
     "You go Girl!",
@@ -68,69 +57,21 @@ GIRLBOSSES: tuple[int, ...] = (
     191119825353965568,
 )
 
-# -------------------- Cog --------------------
 
+class Girlboss(BaseCog):
+    """Cog: /girlboss."""
 
-class Girlboss(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @app_commands.command(name="girlboss", description="Schenkt dir eine zufällige Girlboss-Power-Message ✨")
+    @app_commands.command(
+        name="girlboss",
+        description="Schenkt dir eine zufällige Girlboss-Power-Message ✨",
+        extras={"error": "Heute kein Girlbossen :/"},
+    )
     async def girlboss(self, interaction: discord.Interaction):
-        """
-        Postet eine motivierende Girlboss-Nachricht und pingt die Person,
-        die den Command ausgeführt hat – nur für freigeschaltete User.
-        """
-        try:
-            uid = interaction.user.id
-            if uid not in GIRLBOSSES:
-                # freundlich & nicht-spammy: ephemerer Hinweis
-                await interaction.response.send_message(
-                    "🚫 Dieser Befehl ist aktuell nur für ausgewählte Queens aktiviert.",
-                    ephemeral=True,
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "Access denied",
-                    interaction.user,
-                    uid,
-                    command="/girlboss",
-                )
-                return
+        if interaction.user.id not in GIRLBOSSES:
+            raise UserError("🚫 Dieser Befehl ist aktuell nur für ausgewählte Queens aktiviert.")
 
-            # öffentlich antworten, damit der Ping sichtbar ist
-            await interaction.response.send_message(random.choice(GIRLBOSS_MESSAGES))
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Message sent",
-                interaction.user,
-                uid,
-                command="/girlboss",
-            )
-
-        except Exception as e:
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Execution failed",
-                interaction.user,
-                uid,
-                command="/girlboss",
-                error=e,
-                exc_info=True,
-            )
-            # sichere Fallback-Antwort
-            if interaction.response.is_done():
-                await interaction.followup.send("Heute kein Girlbossen :/", ephemeral=True)
-            else:
-                await interaction.response.send_message("Heute kein Girlbossen :/", ephemeral=True)
-
-# -------------------- Setup --------------------
+        await interaction.response.send_message(random.choice(GIRLBOSS_MESSAGES))
+        self.log("Message sent", interaction)
 
 
 async def setup(bot: commands.Bot):

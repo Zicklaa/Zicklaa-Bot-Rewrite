@@ -1,30 +1,20 @@
-# discordle_cog.py
-# -*- coding: utf-8 -*-
-"""
-Discordle / Bildcordle – Slash-Command-Version für discord.py 2.x
-"""
+"""/discordle & /bildcordle – Ratespiel: Wer hat diese Nachricht bzw. dieses Bild gepostet?"""
 
-from __future__ import annotations
-
-import logging
 import random
 import time
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog, UserError
+from utils.helpers import fetch_channel, truncate
 
-logger = logging.getLogger("ZicklaaBotRewrite.Discordle")
-logging.basicConfig(level=logging.INFO)
+# -------------------- Daten --------------------
 
-# --- Daten ---------------------------------------------------------------
-
-user_list: Dict[int, str] = {
+# Mitspieler: nur Nachrichten dieser User werden gezogen, ihre Namen sind die Antwortmöglichkeiten
+USER_LIST: dict[int, str] = {
     255843901452189696: "Maik#4496",
     369579608615682071: "Windowmarker#8038",
     122721968406528001: "Lou E Coyote#3879",
@@ -82,14 +72,16 @@ user_list: Dict[int, str] = {
     192318108990570497: "Khas#2052",
     95480104779526144: "Neriik#1984",
 }
-unerwuenscht: Dict[int, str] = {
+# Bots & Co., die nie gezogen werden
+UNERWUENSCHT: dict[int, str] = {
     571051961256902671: "Der Gelbfus Cowboy#1008",
     368105370532577280: "Zapier#0625",
     595627591118094347: 'Axel "Omega Prime" Werner#4331',
     335930325462941698: "Weltherrschaftsbot#7241",
     356268235697553409: ".fmbot#8173",
 }
-channel_ids: Dict[int, int] = {
+# Channel-ID -> Unix-Timestamp, ab dem zufällige Nachrichten gezogen werden
+CHANNEL_IDS: dict[int, int] = {
     122739462210846721: 1449075600,
     486547650976677899: 1536072480,
     608746970340786282: 1565208000,
@@ -104,205 +96,138 @@ channel_ids: Dict[int, int] = {
     675448334089060409: 1581109200,
     860154286141997056: 1625148000,
 }
-ext_list: Sequence[str] = (
+# Anhänge mit diesen Endungen sind keine Bilder (Videos/Audio)
+NON_IMAGE_EXTENSIONS = (
     "3g2", "3gp", "amv", "asf", "avi", "gifv", "m4p", "m4v", "mov",
-    "mp2", "mp4", "mpeg", "mpg", "webm", "mp3"
+    "mp2", "mp4", "mpeg", "mpg", "webm", "mp3",
 )
 
-# --- Helpers -------------------------------------------------------------
+GUESS_EMOJIS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "❌")
+MYSTERY_ICON = "https://i.pinimg.com/564x/b5/46/3c/b5463c3591ec63cf076ac48179e3b0db.jpg"
+ATTEMPTS = 8  # so viele zufällige Stellen werden probiert, bevor aufgegeben wird
 
-
-def random_date_since(unix_start: int) -> datetime:
-    current = int(time.time())
-    stamp = random.randint(unix_start, current)
-    return datetime.fromtimestamp(stamp)
+# -------------------- Helpers --------------------
 
 
 def is_allowed_author(uid: int) -> bool:
-    return uid in user_list and uid not in unerwuenscht
-
-
-async def fetch_random_messages(ch: discord.TextChannel, around: datetime, limit=100):
-    return [m async for m in ch.history(limit=limit, around=around)]
-
-
-def pick_candidates(correct: str, pool: Iterable[str], k: int = 4) -> List[str]:
-    cands = {correct}
-    pool_list = list(pool)
-    random.shuffle(pool_list)
-    for name in pool_list:
-        if len(cands) >= k:
-            break
-        cands.add(name)
-    result = list(cands)
-    random.shuffle(result)
-    return result
+    return uid in USER_LIST and uid not in UNERWUENSCHT
 
 
 def is_image_like(url: str) -> bool:
-    return not any(url.lower().endswith("." + ext) for ext in ext_list)
+    return not url.lower().endswith(tuple("." + ext for ext in NON_IMAGE_EXTENSIONS))
 
 
-async def add_guess_reactions(msg: discord.Message):
-    for emoji in ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "❌"]:
+def pick_candidates(correct: str, pool: list[str], k: int = 4) -> list[str]:
+    """Liefert k gemischte Antwortmöglichkeiten inklusive der richtigen."""
+    others = random.sample([name for name in pool if name != correct], k - 1)
+    candidates = [correct, *others]
+    random.shuffle(candidates)
+    return candidates
+
+
+def spoiler_padded(text: str) -> str:
+    """Spoiler mit zufälliger Breite, damit die Länge nichts verrät."""
+    return text.ljust(random.randint(25, 50), "\u2000")
+
+
+def build_embed(
+    title: str, question: str, host: str, message: discord.Message,
+    candidates: list[str], *, round_one: str, image_url: str | None = None,
+) -> discord.Embed:
+    """Baut das Rätsel-Embed: jede Runde verrät per Spoiler etwas mehr."""
+    embed = discord.Embed(title=title, description=question, color=0x00FF00)
+    embed.set_author(name="Mysteriös", icon_url=MYSTERY_ICON)
+    embed.set_footer(text=f"Discordle by: {host}")
+    if image_url:
+        embed.set_image(url=image_url)
+
+    rounds = {
+        "Runde 1": round_one,
+        "Runde 2": f"||{message.created_at:%d.%m.%Y, %H:%M}||",
+        "Runde 3": f"||#{spoiler_padded(str(message.channel))}||",
+        "Runde 4": "||" + "\n".join(candidates) + "||",
+        "Auflösung": f"||{spoiler_padded(str(message.author))}\n[Link zur Nachricht]({message.jump_url})||",
+    }
+    for name, value in rounds.items():
+        embed.add_field(name=f"**{name}**", value=value, inline=False)
+    return embed
+
+
+# -------------------- Cog --------------------
+
+
+class Discordle(BaseCog):
+    """Cog: /discordle (Text) & /bildcordle (Bild)."""
+
+    async def _random_messages(self) -> list[discord.Message]:
+        """Lädt bis zu 100 Nachrichten rund um einen zufälligen Zeitpunkt aus einem zufälligen Channel."""
+        channel_id, start = random.choice(list(CHANNEL_IDS.items()))
         try:
-            await msg.add_reaction(emoji)
-        except Exception as e:
-            log_event(
-                logger,
-                logging.WARNING,
-                "Discordle",
-                "Reaction add failed",
-                emoji=emoji,
-                error=e,
-                exc_info=True,
-            )
+            channel = await fetch_channel(self.bot, channel_id)
+        except discord.HTTPException:
+            return []
+        if not isinstance(channel, discord.TextChannel):
+            return []
 
-# --- Embeds --------------------------------------------------------------
+        around = datetime.fromtimestamp(random.randint(start, int(time.time())))
+        messages = [m async for m in channel.history(limit=100, around=around)]
+        random.shuffle(messages)
+        return [m for m in messages if is_allowed_author(m.author.id)]
 
-
-def build_text_embed(ctx_user: str, message: discord.Message, candidates: Sequence[str]):
-    e = discord.Embed(
-        title="Discordle",
-        description="Welcher User hat dieses lyrische Meisterwerk verfasst?",
-        color=0x00FF00,
-    )
-    e.set_author(
-        name="Mysteriös",
-        icon_url="https://i.pinimg.com/564x/b5/46/3c/b5463c3591ec63cf076ac48179e3b0db.jpg",
-    )
-    e.set_footer(text=f"Discordle by: {ctx_user}")
-    e.add_field(name="**Runde 1**", value=message.content, inline=False)
-    e.add_field(name="**Runde 2**",
-                value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
-    e.add_field(name="**Runde 3**",
-                value="||#" +
-                str(message.channel).ljust(
-                    random.randint(25, 50), "\u2000")+"||",
-                inline=False)
-    e.add_field(name="**Runde 4**", value="||" +
-                "\n".join(candidates) + "||", inline=False)
-    e.add_field(name="**Auflösung**",
-                value="||" +
-                str(message.author).ljust(random.randint(25, 50), "\u2000")
-                + f"\n[Link zur Nachricht]({message.jump_url})||",
-                inline=False)
-    return e
-
-
-def build_image_embed(ctx_user: str, message: discord.Message, img_url: str, candidates: Sequence[str]):
-    e = discord.Embed(
-        title="Bildcordle",
-        description="Welcher User hat dieses optische Meisterwerk verfasst?",
-        color=0x00FF00,
-    )
-    e.set_author(
-        name="Mysteriös",
-        icon_url="https://i.pinimg.com/564x/b5/46/3c/b5463c3591ec63cf076ac48179e3b0db.jpg",
-    )
-    e.set_footer(text=f"Discordle by: {ctx_user}")
-    e.set_image(url=img_url)
-    e.add_field(name="**Runde 1**", value="Siehe Bild", inline=False)
-    e.add_field(name="**Runde 2**",
-                value=f"||{message.created_at:%d.%m.%Y, %H:%M}||", inline=False)
-    e.add_field(name="**Runde 3**",
-                value="||#" +
-                str(message.channel).ljust(
-                    random.randint(25, 50), "\u2000")+"||",
-                inline=False)
-    e.add_field(name="**Runde 4**", value="||" +
-                "\n".join(candidates) + "||", inline=False)
-    e.add_field(name="**Auflösung**",
-                value="||" +
-                str(message.author).ljust(random.randint(25, 50), "\u2000")
-                + f"\n[Link zur Nachricht]({message.jump_url})||",
-                inline=False)
-    return e
-
-# --- Cog ----------------------------------------------------------------
-
-
-@dataclass
-class ChannelSource:
-    cid: int
-    start: int
-
-
-class Discordle(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.sources = [ChannelSource(cid, s)
-                        for cid, s in channel_ids.items()]
-        self.usernames = list(user_list.values())
-
-    async def _pick_channel(self) -> Optional[discord.TextChannel]:
-        src = random.choice(self.sources)
-        ch = self.bot.get_channel(src.cid)
-        if isinstance(ch, discord.TextChannel):
-            return ch
-        try:
-            ch = await self.bot.fetch_channel(src.cid)
-            return ch if isinstance(ch, discord.TextChannel) else None
-        except:
-            return None
-
-    async def _pick_text_msg(self) -> Optional[discord.Message]:
-        for _ in range(8):
-            ch = await self._pick_channel()
-            if not ch:
-                continue
-            around = random_date_since(
-                channel_ids.get(ch.id, int(time.time())))
-            msgs = await fetch_random_messages(ch, around, 100)
-            random.shuffle(msgs)
-            for m in msgs:
-                if (m.content and is_allowed_author(m.author.id)
-                        and 5 < len(m.content.split()) < 50):
+    async def _pick_text_msg(self) -> discord.Message | None:
+        """Sucht eine Textnachricht mit 6–49 Wörtern."""
+        for _ in range(ATTEMPTS):
+            for m in await self._random_messages():
+                if m.content and 5 < len(m.content.split()) < 50:
                     return m
         return None
 
-    async def _pick_image_msg(self) -> Optional[Tuple[discord.Message, str]]:
-        for _ in range(8):
-            ch = await self._pick_channel()
-            if not ch:
-                continue
-            around = random_date_since(
-                channel_ids.get(ch.id, int(time.time())))
-            msgs = await fetch_random_messages(ch, around, 100)
-            random.shuffle(msgs)
-            for m in msgs:
-                if is_allowed_author(m.author.id) and m.attachments:
-                    for att in m.attachments:
-                        if is_image_like(att.url):
-                            return m, att.url
+    async def _pick_image_msg(self) -> tuple[discord.Message, str] | None:
+        """Sucht eine Nachricht mit Bild-Anhang; gibt (Nachricht, Bild-URL) zurück."""
+        for _ in range(ATTEMPTS):
+            for m in await self._random_messages():
+                for att in m.attachments:
+                    if is_image_like(att.url):
+                        return m, att.url
         return None
+
+    async def _send_round(self, interaction: discord.Interaction, embed: discord.Embed):
+        """Schickt das Rätsel und hängt die Rate-Reaktionen an."""
+        out = await interaction.followup.send(embed=embed, wait=True)
+        for emoji in GUESS_EMOJIS:
+            try:
+                await out.add_reaction(emoji)
+            except discord.HTTPException as e:
+                self.log("Reaction add failed", interaction, emoji=emoji, error=e)
+        self.log("Round started", interaction, title=embed.title)
+
+    def _candidates(self, message: discord.Message) -> list[str]:
+        return pick_candidates(str(message.author), list(USER_LIST.values()))
 
     @app_commands.command(name="discordle", description="Starte eine Discordle-Runde (Text).")
     async def cmd_dc(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
         msg = await self._pick_text_msg()
         if not msg:
-            await interaction.followup.send("Was ist denn mit Karsten los??")
-            return
-        cands = pick_candidates(str(msg.author), self.usernames, 4)
-        emb = build_text_embed(interaction.user.display_name, msg, cands)
-        out = await interaction.followup.send(embed=emb)
-        await add_guess_reactions(out)
+            raise UserError("Was ist denn mit Karsten los??")
+
+        await self._send_round(interaction, build_embed(
+            "Discordle", "Welcher User hat dieses lyrische Meisterwerk verfasst?",
+            interaction.user.display_name, msg, self._candidates(msg), round_one=truncate(msg.content, 1024),
+        ))
 
     @app_commands.command(name="bildcordle", description="Starte eine Bildcordle-Runde (Bild).")
     async def cmd_bc(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
         found = await self._pick_image_msg()
         if not found:
-            await interaction.followup.send("Was ist denn mit Karsten los??")
-            return
-        msg, url = found
-        cands = pick_candidates(str(msg.author), self.usernames, 4)
-        emb = build_image_embed(interaction.user.display_name, msg, url, cands)
-        out = await interaction.followup.send(embed=emb)
-        await add_guess_reactions(out)
+            raise UserError("Was ist denn mit Karsten los??")
 
-# --- Setup ---------------------------------------------------------------
+        msg, url = found
+        await self._send_round(interaction, build_embed(
+            "Bildcordle", "Welcher User hat dieses optische Meisterwerk verfasst?",
+            interaction.user.display_name, msg, self._candidates(msg), round_one="Siehe Bild", image_url=url,
+        ))
 
 
 async def setup(bot: commands.Bot):

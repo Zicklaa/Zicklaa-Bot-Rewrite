@@ -1,272 +1,143 @@
-# lyrics_cog.py
-# -*- coding: utf-8 -*-
-"""
-Lyrics-Cog (discord.py 2.x, Slash-Commands)
-- /lyrics full <lastfm-username> : Aktueller Song + Lyrics als Embed
-- /lyrics link <lastfm-username> : Aktueller Song + Lyrics-Link als Embed
-"""
+"""/lyrics full|link – aktueller LastFM-Song eines Users mit Lyrics bzw. Genius-Link."""
 
-from __future__ import annotations
-
-import logging
+import asyncio
 import os
+
 import discord
 import lyricsgenius
 import pylast
 from discord import app_commands
 from discord.ext import commands
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog, UserError, in_channels
+from utils.helpers import truncate
+from utils.settings import TEST_CHANNEL_ID
 
-logger = logging.getLogger("ZicklaaBotRewrite.Lyrics")
+# -------------------- Konfiguration --------------------
 
-# -------------------- Settings --------------------
-
-ALLOWED_CHANNEL_IDS: list[int] = [
+ALLOWED_CHANNEL_IDS = (
     608746970340786282,  # f2-in-concert
     870242601125675008,  # f2-in-concert thread
-    567411189336768532,  # testchannel (Dev-Channel)
-]
+    TEST_CHANNEL_ID,
+)
 
-# API Keys aus .env laden
 LASTFM_API_KEY = os.environ["LASTFM_API_KEY"]
 LASTFM_API_SECRET = os.environ["LASTFM_API_SECRET"]
 LYRICS_API_KEY = os.environ["LYRICS_KEY"]
 
+ERROR_TEXT = "❌ Fehler beim Abrufen von Daten."
+MAX_LYRICS_LEN = 5000
+lyrics_channels = in_channels(
+    *ALLOWED_CHANNEL_IDS, message="❌ Dieser Command ist nur in bestimmten Channels erlaubt."
+)
 
-class Lyrics(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
+# -------------------- Helpers (synchron, laufen im Thread) --------------------
 
-    # -------------------- Helpers --------------------
 
-    def _get_lastfm_user(self, username: str) -> pylast.User:
-        """Erstellt eine LastFM-User-Instanz."""
+def build_song_embed(user: pylast.User, track: pylast.Track, username: str) -> discord.Embed:
+    """Baut das Basis-Embed für einen LastFM-Track."""
+    try:
+        duration = track.get_duration() or 0
+    except Exception:
+        duration = 0
+    minutes, seconds = divmod(duration // 1000, 60)
+
+    artist, title = str(track.get_artist()), str(track.get_name())
+    artist_url = "https://www.last.fm/de/music/" + artist.replace(" ", "+")
+    song_url = artist_url + "/_/" + title.replace(" ", "+").replace("/", "%2F")
+
+    embed = discord.Embed(color=0x1D9BF0)
+    embed.set_author(
+        name=username,
+        icon_url=user.get_image() or None,
+        url=f"https://www.last.fm/user/{username}",
+    )
+    cover = track.get_cover_image()
+    if cover:
+        embed.set_thumbnail(url=str(cover))
+
+    embed.add_field(name="Titel", value=f"[{title}]({song_url})", inline=False)
+    embed.add_field(name="Artist", value=f"[{artist}]({artist_url})", inline=True)
+
+    album = str(track.get_album() or "").replace(artist, "").replace(" - ", "")
+    embed.set_footer(
+        text=f"Album: {album} | Duration: {minutes}:{seconds:02d} | Plays: {track.get_playcount()}"
+    )
+    return embed
+
+
+def add_lyrics(embed: discord.Embed, song) -> None:
+    """Hängt die kompletten Lyrics an (auf mehrere Felder verteilt)."""
+    if not (song and song.lyrics):
+        embed.add_field(name="Lyrics", value="❌ Keine Lyrics gefunden.", inline=False)
+        return
+    # Genius liefert Kopf- und Fußzeilen mit -> abschneiden
+    text = song.lyrics.replace("EmbedShare URLCopyEmbedCopy", "").partition("Read More")[2].strip()
+    # Ein Embed fasst insgesamt max. 6000 Zeichen -> sehr lange Lyrics kappen
+    text = truncate(text, MAX_LYRICS_LEN)
+    for start in range(0, len(text), 1020):
+        embed.add_field(name="Lyrics", value=text[start:start + 1020], inline=False)
+
+
+def add_link(embed: discord.Embed, song, track: pylast.Track) -> None:
+    """Hängt nur den Link zur Genius-Seite an."""
+    value = f"[{track}]({song.url})" if song and song.url else "❌ Kein Link gefunden."
+    embed.add_field(name="Lyrics-Link", value=value, inline=False)
+
+
+# -------------------- Cog --------------------
+
+
+class Lyrics(BaseCog):
+    """Cog: /lyrics."""
+
+    lyrics = app_commands.Group(name="lyrics", description="Zeigt Lyrics vom aktuellen LastFM-Song")
+
+    def _fetch_embed(self, username: str, full: bool) -> discord.Embed | None:
+        """Holt Song (LastFM) und Lyrics (Genius); None, wenn der User nichts hört."""
+        network = pylast.LastFMNetwork(api_key=LASTFM_API_KEY, api_secret=LASTFM_API_SECRET)
+        user = network.get_user(username)
+        track = user.get_now_playing()
+        if not track:
+            return None
+
+        embed = build_song_embed(user, track, username)
+        field = "Lyrics" if full else "Lyrics-Link"
         try:
-            network = pylast.LastFMNetwork(
-                api_key=LASTFM_API_KEY,
-                api_secret=LASTFM_API_SECRET,
+            song = lyricsgenius.Genius(LYRICS_API_KEY).search_song(
+                title=str(track.get_name()), artist=str(track.get_artist())
             )
-            return network.get_user(username)
+            if full:
+                add_lyrics(embed, song)
+            else:
+                add_link(embed, song, track)
         except Exception as e:
-            raise RuntimeError(f"LastFM-User konnte nicht geladen werden: {e}")
-
-    def _build_song_embed(self, user: pylast.User, track: pylast.Track, username: str) -> discord.Embed:
-        """Baut ein Basis-Embed für einen LastFM-Track."""
-        try:
-            dur = track.get_duration() or 0
-        except Exception:
-            dur = 0
-        minutes, seconds = divmod(int(dur / 1000), 60)
-
-        artisturl = "https://www.last.fm/de/music/" + \
-            str(track.get_artist()).replace(" ", "+")
-        songurl = artisturl + "/_/" + \
-            str(track.get_name()).replace(" ", "+").replace("/", "%2F")
-
-        name = f"[{track.get_name()}]({songurl})"
-        artist = f"[{track.get_artist()}]({artisturl})"
-
-        embed = discord.Embed(color=0x1D9BF0)
-
-        if user.get_image():
-            embed.set_author(
-                name=username,
-                icon_url=user.get_image(),
-                url=f"https://www.last.fm/user/{username}",
-            )
-        else:
-            embed.set_author(
-                name=username, url=f"https://www.last.fm/user/{username}")
-
-        if track.get_cover_image():
-            embed.set_thumbnail(url=str(track.get_cover_image()))
-
-        embed.add_field(name="Titel", value=name, inline=False)
-        embed.add_field(name="Artist", value=artist, inline=True)
-
-        album = str(track.get_album() or "").replace(
-            str(track.get_artist()), "").replace(" - ", "")
-        footer = f"Album: {album} | Duration: {minutes}:{seconds:02d} | Plays: {track.get_playcount()}"
-        embed.set_footer(text=footer)
-
+            embed.add_field(name=field, value=f"❌ Fehler beim Abrufen von {field}.", inline=False)
+            self.log("Genius error", target=username, error=e)
         return embed
 
-    # -------------------- Slash-Commands --------------------
+    async def _send(self, interaction: discord.Interaction, username: str, full: bool):
+        """Gemeinsame Logik für /lyrics full und /lyrics link."""
+        await interaction.response.defer(thinking=True)
 
-    lyrics = app_commands.Group(
-        name="lyrics", description="Zeigt Lyrics vom aktuellen LastFM-Song")
+        # pylast und lyricsgenius arbeiten synchron -> in einen Thread auslagern
+        embed = await asyncio.to_thread(self._fetch_embed, username, full)
+        if embed is None:
+            raise UserError("🎧 Dieser User hört gerade nichts.")
 
-    @lyrics.command(name="full", description="Aktuellen Song + Lyrics anzeigen")
+        await interaction.followup.send(embed=embed)
+        self.log("Lyrics sent", interaction, target=username)
+
+    @lyrics.command(name="full", description="Aktuellen Song + Lyrics anzeigen", extras={"error": ERROR_TEXT})
+    @lyrics_channels
     async def lyrics_full(self, interaction: discord.Interaction, username: str):
-        if interaction.channel_id not in ALLOWED_CHANNEL_IDS:
-            await interaction.response.send_message(
-                "❌ Dieser Command ist nur in bestimmten Channels erlaubt.", ephemeral=True
-            )
-            return
+        await self._send(interaction, username, full=True)
 
-        await interaction.response.defer(thinking=True)
-        try:
-            user = self._get_lastfm_user(username)
-            track = user.get_now_playing()
-            if not track:
-                await interaction.followup.send("🎧 Dieser User hört gerade nichts.")
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "User not playing",
-                    interaction.user,
-                    interaction.user.id,
-                    command="lyrics full",
-                    target=username,
-                )
-                return
-
-            embed = self._build_song_embed(user, track, username)
-
-            # Lyrics via Genius
-            try:
-                genius = lyricsgenius.Genius(LYRICS_API_KEY)
-                song = genius.search_song(
-                    title=str(track.get_name()), artist=str(track.get_artist()))
-                if song and song.lyrics:
-                    lyrics_text = song.lyrics.replace(
-                        "EmbedShare URLCopyEmbedCopy", "")
-                    lyrics_text = lyrics_text.partition("Read More")[2].strip()
-                    while lyrics_text:
-                        part, lyrics_text = lyrics_text[:1020], lyrics_text[1020:]
-                        embed.add_field(
-                            name="Lyrics", value=part, inline=False)
-                else:
-                    embed.add_field(
-                        name="Lyrics", value="❌ Keine Lyrics gefunden.", inline=False)
-            except Exception as e:
-                embed.add_field(
-                    name="Lyrics", value="❌ Fehler beim Abrufen von Lyrics.", inline=False)
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    self.__class__.__name__,
-                    "Genius error",
-                    interaction.user,
-                    interaction.user.id,
-                    command="lyrics full",
-                    target=username,
-                    error=e,
-                    exc_info=True,
-                )
-
-            await interaction.followup.send(embed=embed)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Lyrics full sent",
-                interaction.user,
-                interaction.user.id,
-                command="lyrics full",
-                target=username,
-            )
-
-        except Exception as e:
-            await interaction.followup.send("❌ Fehler beim Abrufen von Daten.", ephemeral=True)
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Lyrics full failed",
-                interaction.user,
-                interaction.user.id,
-                command="lyrics full",
-                target=username,
-                error=e,
-                exc_info=True,
-            )
-
-    @lyrics.command(name="link", description="Aktuellen Song + Genius-Link anzeigen")
+    @lyrics.command(name="link", description="Aktuellen Song + Genius-Link anzeigen", extras={"error": ERROR_TEXT})
+    @lyrics_channels
     async def lyrics_link(self, interaction: discord.Interaction, username: str):
-        if interaction.channel_id not in ALLOWED_CHANNEL_IDS:
-            await interaction.response.send_message(
-                "❌ Dieser Command ist nur in bestimmten Channels erlaubt.", ephemeral=True
-            )
-            return
+        await self._send(interaction, username, full=False)
 
-        await interaction.response.defer(thinking=True)
-        try:
-            user = self._get_lastfm_user(username)
-            track = user.get_now_playing()
-            if not track:
-                await interaction.followup.send("🎧 Dieser User hört gerade nichts.")
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "User not playing",
-                    interaction.user,
-                    interaction.user.id,
-                    command="lyrics link",
-                    target=username,
-                )
-                return
-
-            embed = self._build_song_embed(user, track, username)
-
-            try:
-                genius = lyricsgenius.Genius(LYRICS_API_KEY)
-                song = genius.search_song(
-                    title=str(track.get_name()), artist=str(track.get_artist()))
-                if song and song.url:
-                    embed.add_field(
-                        name="Lyrics-Link", value=f"[{track}]({song.url})", inline=False)
-                else:
-                    embed.add_field(name="Lyrics-Link",
-                                    value="❌ Kein Link gefunden.", inline=False)
-            except Exception as e:
-                embed.add_field(
-                    name="Lyrics-Link", value="❌ Fehler beim Abrufen des Links.", inline=False)
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    self.__class__.__name__,
-                    "Genius error",
-                    interaction.user,
-                    interaction.user.id,
-                    command="lyrics link",
-                    target=username,
-                    error=e,
-                    exc_info=True,
-                )
-
-            await interaction.followup.send(embed=embed)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Lyrics link sent",
-                interaction.user,
-                interaction.user.id,
-                command="lyrics link",
-                target=username,
-            )
-
-        except Exception as e:
-            await interaction.followup.send("❌ Fehler beim Abrufen von Daten.", ephemeral=True)
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Lyrics link failed",
-                interaction.user,
-                interaction.user.id,
-                command="lyrics link",
-                target=username,
-                error=e,
-                exc_info=True,
-            )
-
-
-# -------------------- Setup --------------------
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Lyrics(bot))

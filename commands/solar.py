@@ -1,14 +1,18 @@
+"""/solar – Live-Daten der Ziegler PV-Anlage (Sungrow-Wechselrichter per Modbus)."""
+
 import asyncio
 import logging
 import struct
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 from pymodbus.client import ModbusTcpClient
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog, UserError
+from utils.logging_helper import LOGGER_NAME
 
-logger = logging.getLogger("ZicklaaBotRewrite.Solar")
+logger = logging.getLogger(f"{LOGGER_NAME}.Solar")
 
 IP_ADDRESS = "192.168.0.43"
 PORT = 502
@@ -63,126 +67,85 @@ def fetch_sungrow_data() -> dict | None:
         return None
     finally:
         client.close()
-        
 
-class Solar(commands.Cog):
+
+class Solar(BaseCog):
     """Cog: /solar – Fragt Live-Daten der Ziegler PV-Anlage ab."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
 
     @app_commands.command(
         name="solar",
-        description="Zeigt den aktuellen Status der Ziegler PV-Anlage."
+        description="Zeigt den aktuellen Status der Ziegler PV-Anlage.",
+        extras={"error": "Solar Schmolar, Fehler beim Abrufen der PV-Daten."},
     )
     async def solar(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer()
+        await interaction.response.defer()
 
-            data = await asyncio.to_thread(fetch_sungrow_data)
+        # Modbus-Client ist synchron -> in einen Thread auslagern
+        data = await asyncio.to_thread(fetch_sungrow_data)
+        if not data:
+            raise UserError("❌ **Fehler:** Wechselrichter der Ziegler PV-Anlage ist aktuell nicht erreichbar.")
 
-            if not data:
-                await interaction.followup.send(
-                    "❌ **Fehler:** Wechselrichter der Ziegler PV-Anlage ist aktuell nicht erreichbar.",
-                    ephemeral=True
-                )
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    self.__class__.__name__,
-                    "Solar fetch failed",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/solar"
-                )
-                return
+        # Status-Logik
+        bat_pwr = data["battery_power_w"]
+        if bat_pwr > 0:
+            bat_status = f"⚡ Laden ({bat_pwr} W)"
+        elif bat_pwr < 0:
+            bat_status = f"🔋 Entladen ({abs(bat_pwr)} W)"
+        else:
+            bat_status = "💤 Standby"
 
-            # Status-Logik
-            bat_pwr = data["battery_power_w"]
-            if bat_pwr > 0:
-                bat_status = f"⚡ Laden ({bat_pwr} W)"
-            elif bat_pwr < 0:
-                bat_status = f"🔋 Entladen ({abs(bat_pwr)} W)"
-            else:
-                bat_status = "💤 Standby"
+        grid_pwr = data["grid_power_w"]
+        if grid_pwr > 0:
+            grid_status = f"🟢 Einspeisung ({grid_pwr} W)"
+        elif grid_pwr < 0:
+            grid_status = f"🔴 Netzbezug ({abs(grid_pwr)} W)"
+        else:
+            grid_status = "⚪ Neutral (0 W)"
 
-            grid_pwr = data["grid_power_w"]
-            if grid_pwr > 0:
-                grid_status = f"🟢 Einspeisung ({grid_pwr} W)"
-            elif grid_pwr < 0:
-                grid_status = f"🔴 Netzbezug ({abs(grid_pwr)} W)"
-            else:
-                grid_status = "⚪ Neutral (0 W)"
+        # Embed Erstellung
+        embed = discord.Embed(
+            title="☀️ Ziegler PV-Anlage Status",
+            color=discord.Color.gold() if data["pv_power_w"] > 0 else discord.Color.dark_blue(),
+            timestamp=discord.utils.utcnow()
+        )
 
-            # Embed Erstellung
-            embed = discord.Embed(
-                title="☀️ Ziegler PV-Anlage Status",
-                color=discord.Color.gold() if data["pv_power_w"] > 0 else discord.Color.dark_blue(),
-                timestamp=discord.utils.utcnow()
-            )
+        embed.add_field(
+            name="☀️ Photovoltaik",
+            value=(
+                f"**Leistung:** `{data['pv_power_w']} W`\n"
+                f"**Ertrag Heute:** `{data['pv_daily_kwh']:.1f} kWh`"
+            ),
+            inline=True
+        )
 
-            embed.add_field(
-                name="☀️ Photovoltaik",
-                value=(
-                    f"**Leistung:** `{data['pv_power_w']} W`\n"
-                    f"**Ertrag Heute:** `{data['pv_daily_kwh']:.1f} kWh`"
-                ),
-                inline=True
-            )
+        embed.add_field(
+            name="🔋 Speicher",
+            value=(
+                f"**SOC:** `{data['battery_soc']:.1f}%` *(SOH {data['battery_soh']:.0f}%)*\n"
+                f"**Status:** `{bat_status}`\n"
+                f"**Geladen Heute:** `{data['bat_charge_daily_kwh']:.1f} kWh`\n"
+                f"**Entladen Heute:** `{data['bat_discharge_daily_kwh']:.1f} kWh`\n"
+                f"**Temperatur:** `{data['battery_temp']:.1f} °C`"
+            ),
+            inline=True
+        )
 
-            embed.add_field(
-                name="🔋 Speicher",
-                value=(
-                    f"**SOC:** `{data['battery_soc']:.1f}%` *(SOH {data['battery_soh']:.0f}%)*\n"
-                    f"**Status:** `{bat_status}`\n"
-                    f"**Geladen Heute:** `{data['bat_charge_daily_kwh']:.1f} kWh`\n"
-                    f"**Entladen Heute:** `{data['bat_discharge_daily_kwh']:.1f} kWh`\n"
-                    f"**Temperatur:** `{data['battery_temp']:.1f} °C`"
-                ),
-                inline=True
-            )
+        embed.add_field(
+            name="🏠 Haus & Netz",
+            value=(
+                f"**Verbrauch Aktuell:** `{data['house_power_w']} W`\n"
+                f"**Verbrauch Heute:** `{data['house_daily_kwh']:.1f} kWh`\n"
+                f"**Netz Status:** `{grid_status}`\n"
+                f"**Einspeisung Heute:** `{data['grid_export_daily_kwh']:.1f} kWh`\n"
+                f"**Bezug Heute:** `{data['grid_import_daily_kwh']:.1f} kWh`"
+            ),
+            inline=False
+        )
 
-            embed.add_field(
-                name="🏠 Haus & Netz",
-                value=(
-                    f"**Verbrauch Aktuell:** `{data['house_power_w']} W`\n"
-                    f"**Verbrauch Heute:** `{data['house_daily_kwh']:.1f} kWh`\n"
-                    f"**Netz Status:** `{grid_status}`\n"
-                    f"**Einspeisung Heute:** `{data['grid_export_daily_kwh']:.1f} kWh`\n"
-                    f"**Bezug Heute:** `{data['grid_import_daily_kwh']:.1f} kWh`"
-                ),
-                inline=False
-            )
+        embed.set_footer(text="Ziegler PV-Anlage")
 
-            embed.set_footer(text="Ziegler PV-Anlage")
-
-            await interaction.followup.send(embed=embed)
-
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Solar dashboard sent",
-                interaction.user,
-                interaction.user.id,
-                command="/solar"
-            )
-
-        except Exception as e:
-            await interaction.followup.send(
-                "Solar Schmolar, Fehler beim Abrufen der PV-Daten.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Solar dashboard failed",
-                interaction.user,
-                interaction.user.id,
-                command="/solar",
-                error=e,
-                exc_info=True,
-            )
+        await interaction.followup.send(embed=embed)
+        self.log("Solar dashboard sent", interaction)
 
 
 async def setup(bot: commands.Bot):

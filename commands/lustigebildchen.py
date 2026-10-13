@@ -1,61 +1,25 @@
-import logging
-import os
+"""/ltb – postet ein zufälliges lustiges Bildchen aus dem Bilder-Ordner."""
+
 import random
+
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
 
-from utils.logging_helper import log_event
-
-logger = logging.getLogger("ZicklaaBotRewrite.LustigeBildchen")
-
-# Pfad zu den Bildern
-globalPfad = os.environ["globalPfad"]
-DIR = os.path.join(globalPfad, "LustigeBildchen/")
+from utils.base import BaseCog
+from utils.settings import BILDCHEN_DIR
 
 
-class LustigeBildchen(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
+class LustigeBildchen(BaseCog):
+    """Cog: /ltb – zufällige Datei aus LustigeBildchen/."""
 
-    # --- Slash Command ---
     @app_commands.command(name="ltb", description="Postet ein zufälliges lustiges Bildchen.")
     async def ltb(self, interaction: discord.Interaction):
-        try:
-            # Datei wählen
-            file_name = random.choice(os.listdir(DIR))
-            file_path = os.path.join(DIR, file_name)
-
-            # Bild senden
-            await interaction.response.send_message(file=discord.File(file_path))
-
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Image sent",
-                interaction.user,
-                interaction.user.id,
-                command="/ltb",
-                file=file_name,
-            )
-
-        except Exception as e:
-            await interaction.response.send_message("Klappt nit lol 🤷", ephemeral=True)
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Image send failed",
-                interaction.user,
-                interaction.user.id,
-                command="/ltb",
-                file=file_name if 'file_name' in locals() else None,
-                error=e,
-                exc_info=True,
-            )
+        # Nur Dateien direkt im Ordner, keine Unterordner
+        file = random.choice([f for f in BILDCHEN_DIR.iterdir() if f.is_file()])
+        await interaction.response.send_message(file=discord.File(file))
+        self.log("Image sent", interaction, file=file.name)
 
 
-# Setup für Cog
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(LustigeBildchen(bot))

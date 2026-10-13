@@ -1,340 +1,108 @@
-import logging
+"""Admin-Commands (nur Bot-Owner): /load, /unload, /reload, /sync."""
+
+from pathlib import Path
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-from pathlib import Path
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog, owner_only
 
-logger = logging.getLogger("ZicklaaBotRewrite.Admin")
-
-# Nur dieser User darf load/unload/reload/sync ausführen
-OWNER_ID = 288413759117066241
-
-# Deine festen Guilds für gezieltes Sync (entspricht deinem bot.py-Block)
-GUILD_IDS: tuple[int, ...] = (
-    567050382920908801,
-    122739462210846721,
-)
+COMMANDS_DIR = Path(__file__).parent
+EXTENSION_HINT = "Name des Cogs (z.B. fav, chat, remindme)"
 
 
-def _normalize_ext(name: str) -> str:
-    """
-    Nimmt Eingaben wie 'fav' oder 'commands.fav' und liefert immer 'commands.fav'.
-    Entfernt .py-Endung, trims whitespace.
-    """
-    n = (name or "").strip().removesuffix(".py")
-    if not n:
-        return n
-    return n if n.startswith("commands.") else f"commands.{n}"
+def normalize_ext(name: str) -> str:
+    """Macht aus 'fav', 'fav.py' oder 'commands.fav' immer 'commands.fav'."""
+    name = (name or "").strip().removesuffix(".py")
+    return name if not name or name.startswith("commands.") else f"commands.{name}"
 
 
-def _available_extensions() -> list[str]:
-    """
-    Sucht im ./commands Ordner nach *.py (ohne _*), gibt Liste wie 'commands.remindme' zurück.
-    """
-    p = Path(__file__).resolve().parent  # .../commands/admin.py
-    commands_dir = p.parent / "commands"
-    if not commands_dir.exists():
-        return []
-    exts: list[str] = []
-    for f in commands_dir.glob("*.py"):
-        if f.name.startswith("_"):
-            continue
-        exts.append(f"commands.{f.stem}")
-    return sorted(exts)
+def available_extensions() -> list[str]:
+    """Alle ladbaren Cogs im commands-Ordner, z. B. ['admin', 'buli', …]."""
+    return sorted(f.stem for f in COMMANDS_DIR.glob("*.py") if not f.name.startswith("_"))
 
 
-class Admin(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
+class Admin(BaseCog):
+    """Cog: Cogs zur Laufzeit laden/entladen und Slash-Commands synchronisieren."""
 
-    # ---- Autocomplete-Helper ----
     async def _ext_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        current_lower = (current or "").lower()
-        choices = []
-        for ext in _available_extensions():
-            # nur die Endkomponente anzeigen (freundlicher), value bleibt vollqualifiziert
-            label = ext.split(".", 1)[1] if ext.startswith(
-                "commands.") else ext
-            if current_lower in label.lower():
-                choices.append(app_commands.Choice(name=label, value=ext))
-            if len(choices) >= 25:  # Discord-Limit
-                break
-        return choices
+        """Schlägt Cog-Namen vor (Anzeige kurz, Wert vollqualifiziert)."""
+        current = (current or "").lower()
+        return [
+            app_commands.Choice(name=name, value=f"commands.{name}")
+            for name in available_extensions()
+            if current in name.lower()
+        ][:25]  # Discord-Limit
 
-    # ---------------- /load ----------------
-    @app_commands.command(name="load", description="Lädt ein Cog (nur für Bot-Owner).")
-    @app_commands.describe(extension="Name des Cogs (z.B. fav, chat, remindme)")
-    @app_commands.autocomplete(extension=_ext_autocomplete)
-    async def load(self, interaction: discord.Interaction, extension: str):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message(
-                "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.WARNING,
-                self.__class__.__name__,
-                "Unauthorized load",
-                interaction.user,
-                interaction.user.id,
-                command="/load",
-                extension=extension,
-            )
-            return
+    async def _change_extension(self, interaction: discord.Interaction, extension: str, action: str):
+        """Gemeinsame Logik für /load, /unload und /reload."""
+        ext = normalize_ext(extension)
+        loaded = ext in self.bot.extensions
 
-        ext = _normalize_ext(extension)
         try:
-            if ext in self.bot.extensions:
-                await interaction.response.send_message(
-                    f"ℹ️ `{ext}` ist bereits geladen.", ephemeral=True
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "Load skipped",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/load",
-                    extension=ext,
-                )
-                return
-
-            await self.bot.load_extension(ext)
-            await interaction.response.send_message(
-                f"✅ Cog `{ext}` wurde geladen.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Cog loaded",
-                interaction.user,
-                interaction.user.id,
-                command="/load",
-                extension=ext,
-            )
-
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Fehler beim Laden von `{ext}`: {e}", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Load failed",
-                interaction.user,
-                interaction.user.id,
-                command="/load",
-                extension=ext,
-                error=e,
-                exc_info=True,
-            )
-
-    # ---------------- /unload ----------------
-    @app_commands.command(name="unload", description="Entlädt ein Cog (nur für Bot-Owner).")
-    @app_commands.describe(extension="Name des Cogs (z.B. fav, chat, remindme)")
-    @app_commands.autocomplete(extension=_ext_autocomplete)
-    async def unload(self, interaction: discord.Interaction, extension: str):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message(
-                "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.WARNING,
-                self.__class__.__name__,
-                "Unauthorized unload",
-                interaction.user,
-                interaction.user.id,
-                command="/unload",
-                extension=extension,
-            )
-            return
-
-        ext = _normalize_ext(extension)
-        try:
-            if ext not in self.bot.extensions:
-                await interaction.response.send_message(
-                    f"ℹ️ `{ext}` ist nicht geladen.", ephemeral=True
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "Unload skipped",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/unload",
-                    extension=ext,
-                )
-                return
-
-            await self.bot.unload_extension(ext)
-            await interaction.response.send_message(
-                f"✅ Cog `{ext}` wurde entladen.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Cog unloaded",
-                interaction.user,
-                interaction.user.id,
-                command="/unload",
-                extension=ext,
-            )
-
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Fehler beim Entladen von `{ext}`: {e}", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Unload failed",
-                interaction.user,
-                interaction.user.id,
-                command="/unload",
-                extension=ext,
-                error=e,
-                exc_info=True,
-            )
-
-    # ---------------- /reload ----------------
-    @app_commands.command(name="reload", description="Lädt ein Cog neu (nur für Bot-Owner).")
-    @app_commands.describe(extension="Name des Cogs (z.B. fav, chat, remindme)")
-    @app_commands.autocomplete(extension=_ext_autocomplete)
-    async def reload(self, interaction: discord.Interaction, extension: str):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message(
-                "❌ Du bist nicht berechtigt, diesen Befehl zu nutzen.", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.WARNING,
-                self.__class__.__name__,
-                "Unauthorized reload",
-                interaction.user,
-                interaction.user.id,
-                command="/reload",
-                extension=extension,
-            )
-            return
-
-        ext = _normalize_ext(extension)
-        try:
-            # falls nicht geladen → erst laden, sonst reload schlägt fehl
-            if ext not in self.bot.extensions:
+            if action == "load" and loaded:
+                msg = f"ℹ️ `{ext}` ist bereits geladen."
+            elif action == "unload" and not loaded:
+                msg = f"ℹ️ `{ext}` ist nicht geladen."
+            elif action == "load":
                 await self.bot.load_extension(ext)
-                msg = f"✅ Cog `{ext}` war nicht geladen und wurde jetzt **geladen**."
-            else:
+                msg = f"✅ Cog `{ext}` wurde geladen."
+            elif action == "unload":
+                await self.bot.unload_extension(ext)
+                msg = f"✅ Cog `{ext}` wurde entladen."
+            elif loaded:
                 await self.bot.reload_extension(ext)
                 msg = f"✅ Cog `{ext}` wurde **neu geladen**."
-
-            await interaction.response.send_message(msg, ephemeral=True)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Cog reloaded",
-                interaction.user,
-                interaction.user.id,
-                command="/reload",
-                extension=ext,
-            )
-
+            else:
+                # reload eines nicht geladenen Cogs -> einfach laden
+                await self.bot.load_extension(ext)
+                msg = f"✅ Cog `{ext}` war nicht geladen und wurde jetzt **geladen**."
         except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Fehler beim Reload von `{ext}`: {e}", ephemeral=True
-            )
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Reload failed",
-                interaction.user,
-                interaction.user.id,
-                command="/reload",
-                extension=ext,
-                error=e,
-                exc_info=True,
-            )
+            self.log(f"{action} failed", interaction, extension=ext, error=e)
+            msg = f"❌ Fehler bei `{action}` von `{ext}`: {e}"
+        else:
+            self.log(f"{action} done", interaction, extension=ext, result=msg)
 
-    # ---------------- /sync ----------------
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @app_commands.command(name="load", description="Lädt ein Cog (nur für Bot-Owner).")
+    @app_commands.describe(extension=EXTENSION_HINT)
+    @app_commands.autocomplete(extension=_ext_autocomplete)
+    @owner_only()
+    async def load(self, interaction: discord.Interaction, extension: str):
+        await self._change_extension(interaction, extension, "load")
+
+    @app_commands.command(name="unload", description="Entlädt ein Cog (nur für Bot-Owner).")
+    @app_commands.describe(extension=EXTENSION_HINT)
+    @app_commands.autocomplete(extension=_ext_autocomplete)
+    @owner_only()
+    async def unload(self, interaction: discord.Interaction, extension: str):
+        await self._change_extension(interaction, extension, "unload")
+
+    @app_commands.command(name="reload", description="Lädt ein Cog neu (nur für Bot-Owner).")
+    @app_commands.describe(extension=EXTENSION_HINT)
+    @app_commands.autocomplete(extension=_ext_autocomplete)
+    @owner_only()
+    async def reload(self, interaction: discord.Interaction, extension: str):
+        await self._change_extension(interaction, extension, "reload")
+
     @app_commands.command(
         name="sync",
-        description="Synchronisiert Slash-Commands (nur für Bot-Owner)."
+        description="Synchronisiert Slash-Commands (nur für Bot-Owner).",
+        extras={"error": "❌ Fehler beim Synchronisieren."},
     )
+    @owner_only("❌ Nicht erlaubt.")
     async def sync(self, interaction: discord.Interaction):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message("❌ Nicht erlaubt.", ephemeral=True)
-            log_event(
-                logger,
-                logging.WARNING,
-                self.__class__.__name__,
-                "Unauthorized sync",
-                interaction.user,
-                interaction.user.id,
-                command="/sync",
-            )
-            return
-
-        try:
-            # 1) Guilds synchronisieren
-            for gid in GUILD_IDS:
-                guild = discord.Object(id=int(gid))
-                # Wichtig: globale (in-memory) Commands in diese Guild kopieren
-                self.bot.tree.copy_global_to(guild=guild)
-                synced = await self.bot.tree.sync(guild=guild)
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "Guild synced",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/sync",
-                    guild_id=gid,
-                    commands=len(synced),
-                )
-
-            # 2) Globale Commands beim API-Server entfernen
-            self.bot.tree.clear_commands(guild=None)
-            await self.bot.tree.sync(guild=None)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Global commands cleared",
-                interaction.user,
-                interaction.user.id,
-                command="/sync",
-            )
-
-            await interaction.response.send_message(
-                f"✅ Slash-Commands für {len(GUILD_IDS)} Guild(s) synchronisiert.",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message("❌ Fehler beim Synchronisieren.", ephemeral=True)
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Sync failed",
-                interaction.user,
-                interaction.user.id,
-                command="/sync",
-                error=e,
-                exc_info=True,
-            )
+        """Nötig, wenn sich Namen/Parameter von Commands geändert haben."""
+        await interaction.response.defer(ephemeral=True)
+        synced = await self.bot.sync_commands()
+        await interaction.followup.send(
+            f"✅ Slash-Commands für {len(synced)} Guild(s) synchronisiert.", ephemeral=True
+        )
+        self.log("Commands synced", interaction, guilds=synced)
 
 
 async def setup(bot: commands.Bot):

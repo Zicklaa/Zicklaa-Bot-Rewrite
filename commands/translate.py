@@ -1,22 +1,15 @@
-"""
-Translate-Cog (discord.py 2.x, deep_translator)
-- /translate from:<sprache> to:<sprache> text:<text> [ephemeral]
-"""
-
-from __future__ import annotations
+"""/translate – übersetzt Text per Google Translate (deep_translator)."""
 
 import asyncio
-import logging
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from deep_translator import GoogleTranslator
-from utils.logging_helper import log_event
 
-logger = logging.getLogger("ZicklaaBotRewrite.Translate")
+from utils.base import BaseCog, UserError
+from utils.helpers import truncate
 
 FLAG = {
     "de": "🇩🇪", "en": "🇬🇧", "us": "🇺🇸", "fr": "🇫🇷", "es": "🇪🇸", "it": "🇮🇹",
@@ -25,95 +18,85 @@ FLAG = {
     "da": "🇩🇰", "fi": "🇫🇮", "cs": "🇨🇿", "ro": "🇷🇴", "hu": "🇭🇺",
 }
 
+# Zusätzliche Namen, unter denen Sprachen gefunden werden
+ALIASES = {
+    "deutsch": "de", "englisch": "en", "german": "de", "english": "en",
+    "chinese": "zh-cn", "chinesisch": "zh-cn", "brazilian portuguese": "pt",
+}
+
+TRANSLATE_TIMEOUT = 20  # Sekunden
+
+# Vorschläge im Autocomplete, solange noch nichts getippt wurde
+DEFAULT_SUGGESTIONS = ("de", "en", "fr", "es", "it", "tr", "nl", "pl", "pt", "ru")
+
 
 def normalize(s: str) -> str:
     return s.strip().lower().replace("_", "-")
 
 
+def flag(code: str) -> str:
+    """Flaggen-Emoji zum Sprachcode (leer, wenn unbekannt)."""
+    return FLAG.get(code, FLAG.get(code.split("-")[0], ""))
+
+
 @dataclass
 class LangTables:
-    name_to_code: Dict[str, str]
-    code_to_name: Dict[str, str]
-    all_display: List[str]
+    name_to_code: dict[str, str]
+    code_to_name: dict[str, str]
+    all_display: list[str]  # alle Namen und Codes, sortiert (fürs Autocomplete)
 
 
-class Translate(commands.Cog):
+def load_langs() -> LangTables:
+    """Lädt die unterstützten Sprachen von Google Translate (synchron)."""
+    raw = GoogleTranslator().get_supported_languages(as_dict=True)
+    name_to_code = {normalize(name): normalize(code) for name, code in raw.items()}
+    for name, code in ALIASES.items():
+        name_to_code.setdefault(name, code)
+
+    code_to_name: dict[str, str] = {}
+    for name, code in name_to_code.items():
+        code_to_name.setdefault(code, name)
+
+    return LangTables(name_to_code, code_to_name, sorted({*name_to_code, *code_to_name}))
+
+
+class Translate(BaseCog):
+    """Cog: /translate from:<sprache> to:<sprache> text:<text> [ephemeral]."""
+
     def __init__(self, bot: commands.Bot):
-        self.bot = bot
+        super().__init__(bot)
         self.langs: LangTables | None = None
 
     async def cog_load(self):
-        def _load_langs() -> LangTables:
-            try:
-                raw = GoogleTranslator.get_supported_languages(
-                    as_dict=True)  # type: ignore[attr-defined]
-            except TypeError:
-                raw = GoogleTranslator().get_supported_languages(as_dict=True)
-
-            name_to_code = {normalize(name): normalize(code)
-                            for name, code in raw.items()}
-            aliases = {"deutsch": "de", "englisch": "en", "german": "de", "english": "en",
-                       "chinese": "zh-cn", "chinesisch": "zh-cn", "brazilian portuguese": "pt"}
-            for k, v in aliases.items():
-                name_to_code.setdefault(normalize(k), normalize(v))
-
-            code_to_name: Dict[str, str] = {}
-            for name, code in name_to_code.items():
-                code_to_name.setdefault(code, name)
-
-            all_display = sorted(
-                set(list(name_to_code.keys()) + list(code_to_name.keys())))
-            return LangTables(name_to_code, code_to_name, all_display)
-
-        self.langs = await asyncio.to_thread(_load_langs)
-        log_event(
-            logger,
-            logging.INFO,
-            self.__class__.__name__,
-            "Cog loaded",
-            languages=len(self.langs.name_to_code) if self.langs else -1,
-        )
+        self.langs = await asyncio.to_thread(load_langs)
+        self.log("Cog loaded", languages=len(self.langs.name_to_code))
 
     def resolve_lang(self, user_input: str) -> str | None:
-        if not self.langs:
-            return None
+        """Sprachcode zu einer Eingabe (Code oder Name), sonst None."""
         key = normalize(user_input)
-        if key in self.langs.code_to_name:
-            return key
-        return self.langs.name_to_code.get(key)
+        return key if key in self.langs.code_to_name else self.langs.name_to_code.get(key)
 
-    async def lang_autocomplete(self, _: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    async def lang_autocomplete(self, _: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         if not self.langs:
             return []
-        cur = normalize(current)
-        if not cur:
-            seeds = ["de", "en", "fr", "es", "it",
-                     "tr", "nl", "pl", "pt", "ru"]
-            return [app_commands.Choice(name=f"{code} — {self.langs.code_to_name.get(code, code)}", value=code) for code in seeds]
-        choices: List[app_commands.Choice[str]] = []
-        for token in self.langs.all_display:
-            if cur in token:
-                code = token if token in self.langs.code_to_name else self.langs.name_to_code.get(
-                    token, token)
-                name = self.langs.code_to_name.get(code, code)
-                label = f"{code} — {name}"
-                if all(c.value != code for c in choices):
-                    choices.append(app_commands.Choice(
-                        name=label[:100], value=code))
-            if len(choices) >= 25:
-                break
-        return choices
-
-    async def translate_text(self, text: str, target: str, source: str) -> Tuple[str, str]:
-        def _work():
-            trans = GoogleTranslator(
-                source=source, target=target).translate(text)
-            return trans, source
-        return await asyncio.to_thread(_work)
+        current = normalize(current)
+        if current:
+            # Treffer in Namen oder Codes -> eindeutige Codes in Fundreihenfolge
+            tokens = (t for t in self.langs.all_display if current in t)
+            codes = dict.fromkeys(
+                t if t in self.langs.code_to_name else self.langs.name_to_code[t] for t in tokens
+            )
+        else:
+            codes = DEFAULT_SUGGESTIONS
+        return [
+            app_commands.Choice(name=f"{code} — {self.langs.code_to_name.get(code, code)}"[:100], value=code)
+            for code in codes
+        ][:25]
 
     @app_commands.command(
         name="translate",
         description="Übersetzt einen Text von einer Sprache in eine andere.",
+        extras={"error": "❌ Konnte nicht übersetzen."},
     )
     @app_commands.describe(
         from_lang="Quellsprache (z. B. de, en, fr – Autocomplete verfügbar)",
@@ -131,63 +114,30 @@ class Translate(commands.Cog):
         ephemeral: bool = False,
     ):
         if not self.langs:
-            await interaction.response.send_message("❌ Sprachenliste noch nicht geladen.", ephemeral=True)
-            return
-
-        target = self.resolve_lang(to_lang)
-        source = self.resolve_lang(from_lang)
-        if not target or not source:
-            await interaction.response.send_message("❌ Ungültige Sprachcodes angegeben.", ephemeral=True)
-            return
+            raise UserError("❌ Sprachenliste noch nicht geladen.")
+        source, target = self.resolve_lang(from_lang), self.resolve_lang(to_lang)
+        if not source or not target:
+            raise UserError("❌ Ungültige Sprachcodes angegeben.")
 
         await interaction.response.defer(thinking=True, ephemeral=ephemeral)
 
-        try:
-            translated, detected = await self.translate_text(text, target, source)
-            src_code = detected or source
-            dst_code = target
-            src_name = self.langs.code_to_name.get(src_code, src_code)
-            dst_name = self.langs.code_to_name.get(dst_code, dst_code)
+        # deep_translator arbeitet synchron und ohne eigenes Timeout -> Thread + Zeitlimit
+        translated = await asyncio.wait_for(
+            asyncio.to_thread(GoogleTranslator(source=source, target=target).translate, text),
+            timeout=TRANSLATE_TIMEOUT,
+        )
 
-            def flag(code: str) -> str:
-                return FLAG.get(code, FLAG.get(code.split("-")[0], ""))
+        names = self.langs.code_to_name
+        embed = discord.Embed(
+            title=f"{flag(source)} {names.get(source, source)} → {flag(target)} {names.get(target, target)}",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Original", value=truncate(text, 1000), inline=False)
+        embed.add_field(name="Übersetzung", value=truncate(translated, 1000) or "—", inline=False)
+        embed.set_footer(text="Google Translate")
 
-            embed = discord.Embed(
-                title=f"{flag(src_code)} {src_name} → {flag(dst_code)} {dst_name}",
-                color=discord.Color.green(),
-            )
-            embed.add_field(
-                name="Original", value=text[:1000] + ("…" if len(text) > 1000 else ""), inline=False)
-            embed.add_field(name="Übersetzung", value=translated[:1000] + (
-                "…" if len(translated) > 1000 else ""), inline=False)
-            embed.set_footer(text="Google Translate")
-
-            await interaction.followup.send(embed=embed)
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Translation successful",
-                interaction.user,
-                interaction.user.id,
-                command="/translate",
-                source=src_code,
-                target=dst_code,
-            )
-
-        except Exception as e:
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Translation failed",
-                interaction.user,
-                interaction.user.id,
-                command="/translate",
-                error=e,
-                exc_info=True,
-            )
-            await interaction.followup.send("❌ Konnte nicht übersetzen.", ephemeral=True)
+        await interaction.followup.send(embed=embed)
+        self.log("Translation successful", interaction, source=source, target=target)
 
 
 async def setup(bot: commands.Bot):

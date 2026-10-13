@@ -11,15 +11,43 @@ Konfiguration und den kompletten Funktionsumfang.
 - [Befehlsübersicht](#befehlsübersicht)
 
 ## Architektur
-- **bot.py** – Hauptdatei. Lädt Token & Pfade aus `.env`, initialisiert Logger,
-  SQLite‑Datenbank (`reminder-wishlist.db`) und Markov‑Modell (`static/hivemind.json`).
-- **commands/** – Alle Cogs (je eine Datei pro Feature) werden beim Start
-  automatisch geladen und die Slash‑Commands nur auf zugelassene Guilds
-  synchronisiert.
-- **utils/** – Parser für `/remindme at` (natürliche Zeitangaben).
+- **bot.py** – Hauptdatei. Initialisiert Logger, SQLite‑Datenbank
+  (`reminder-wishlist.db`), Markov‑Modell (`static/hivemind.json`) und eine
+  gemeinsame HTTP‑Session, lädt alle Cogs und registriert die Slash‑Commands
+  nur auf den zugelassenen Guilds.
+- **commands/** – Alle Cogs (je eine Datei pro Feature), werden beim Start
+  automatisch geladen.
+- **utils/**
+  - `settings.py` – Pfade und IDs, die mehrere Module brauchen (lädt `.env`).
+  - `base.py` – `BaseCog`/`BaseView` mit einheitlichem Logging und zentraler
+    Fehlerbehandlung, `UserError`, Checks (`owner_only`, `in_channels`).
+  - `helpers.py` – Text‑, Zeit‑ und Nachrichten‑Helfer.
+  - `parser.py` + `rm_grammar.peg` – Parser für `/remindme at`.
+  - `logging_helper.py` – einheitliches Log‑Format.
 - Der Bot reagiert mit kleiner Wahrscheinlichkeit (`SECRET_PROBABILITY`) auf
-  Schlüsselwörter wie „crazy“, „kult“, „hallo“, „lol“, „xd“, „uff“, „gumo“ usw.
-- Globale Cooldowns verhindern Command‑Spam.
+  Schlüsselwörter wie „crazy“, „kult“, „gumo“, „danke“ usw.
+- Ein globaler Cooldown verhindert Spam bei Prefix‑Commands.
+
+### Ein neues Cog schreiben
+```python
+from discord import app_commands
+from utils.base import BaseCog, UserError
+
+class Beispiel(BaseCog):
+    @app_commands.command(name="beispiel", description="…",
+                          extras={"error": "Text bei unerwartetem Fehler"})
+    async def beispiel(self, interaction, zahl: int):
+        if zahl < 1:
+            raise UserError("❌ Zahl zu klein.")   # ephemere Antwort + Warnung im Log
+        await interaction.response.send_message(str(zahl))
+        self.log("Beispiel sent", interaction, zahl=zahl)
+
+async def setup(bot):
+    await bot.add_cog(Beispiel(bot))
+```
+Kein `try/except` nötig: Unerwartete Fehler loggt `BaseCog` mit Traceback und
+antwortet mit dem `extras["error"]`‑Text. Nach Änderungen reicht `/reload <cog>`;
+`/sync` ist nur nötig, wenn sich Namen oder Parameter von Commands ändern.
 
 ## Setup
 ### Abhängigkeiten
@@ -69,16 +97,19 @@ python bot.py
 - `/wiki suchen|artikel|zufall` – Wikipedia‑Artikel als Embed.
 - `/statistik [privat]` – eigene Nachrichten pro Kalenderjahr als Embed mit
   Diagramm (nur für sich selbst, gezählt über die Discord‑Suche).
+- `/solar` – Live‑Status der PV‑Anlage (Sungrow‑Wechselrichter per Modbus).
 
 ### Erinnerungen
 - `/remindme in <zahl> <einheit> [text]` – erinnert nach Zeitspanne.
-- `/remindme at <eingabe> [text]` – natürliche Zeitangabe.
+- `/remindme at <eingabe> [text]` – Datum/Uhrzeit, z. B. `15:30`,
+  `01.09.2025 15:30`, `2025-09-01`.
 - `/remindme list` – anstehende Reminder anzeigen.
 
-### Chat & KI
-- `/chat <text>` – ChatGPT‑Antwort.
-- `/hmchat <text>` – GPT mit Markov‑Flavor.
+### Chat & KI (nur im Spam‑Channel)
+- `/chat <text> [websearch]` – ChatGPT‑Antwort.
+- `/hmchat` – ChatGPT antwortet auf einen zufälligen Hivemind‑Satz.
 - `/image fast|hd|nsfw|hdnsfw <prompt>` – Bildgenerierung via FAL.
+- `/image pipeline <text>` – HD‑Bild mit automatisch optimiertem Prompt.
 - `/tts <text> [voice]` – Text‑to‑Speech.
 
 ### Hivemind
@@ -94,16 +125,19 @@ python bot.py
 - `/jamesh` – „Da gibt es ein James Hoffmann Video dazu.“
 - `/ltb` – zufälliges lustiges Bildchen aus Ordner.
 - `/rezept` – zufälliges gepinntes Rezept.
+- `/chefkoch suchen <zutaten>` & `/chefkoch rotd` – Rezepte von Chefkoch.
 - `/lyrics full|link <lastfm-user>` – aktueller Song inkl. Lyrics bzw. Link.
+- `+wdm <text>` (nur per DM) – postet den Text anonym in den Wichtel‑Channel.
 
 ### Favoriten & Sternbrett
-- Reagiere mit 🦶 auf eine Nachricht → Bot fragt nach Namen und speichert als
-  Fav; 🗑️ löscht eigenen Fav.
+- Reagiere mit 🦶 auf eine Nachricht → Bot fragt per DM nach einem Namen und
+  speichert sie als Fav; 🗑️ auf einem geposteten Fav löscht den eigenen Fav.
 - `/fav [name]` – eigenen Fav abrufen.
 - `/rfav` – zufälligen Fav eines Users.
 - `/allfavs` – alle Favs als Textdatei per DM.
-- ⭐‑Reaktionen ab `THRESHOLD` posten automatisch ins Sternbrett.
-- `/star <link>` – Nachricht manuell ins Sternbrett posten (nur Admin).
+- ⭐‑Reaktionen ab `THRESHOLD` posten automatisch ins Sternbrett; Anhänge
+  landen zusätzlich im Ordner für `/ltb`.
+- `/star <link>` – Nachricht manuell ins Sternbrett posten (nur Owner).
 
 ### Fußball & Info
 - `/buli` – nächster Bundesliga‑Spieltag (Football‑Data API).
@@ -113,5 +147,5 @@ python bot.py
 - `/load <cog>` – Cog laden.
 - `/unload <cog>` – Cog entladen.
 - `/reload <cog>` – Cog neu laden.
-- `/sync` – Slash‑Commands synchronisieren.
+- `/sync` – Slash‑Commands synchronisieren (nach Änderungen an Namen/Parametern).
 

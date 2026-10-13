@@ -1,429 +1,204 @@
+"""Favoriten: Nachrichten per Reaktion speichern und später wieder abrufen.
+
+- 🦶 auf eine Nachricht: Bot fragt per DM nach einem Namen und speichert den Fav
+- 🗑️ auf einen geposteten Fav: löscht ihn (nur der Besitzer)
+- /fav [name], /rfav, /allfavs (auch als Prefix-Commands: +fav, +rfav, +allfavs)
+"""
+
+import asyncio
 import logging
-from collections.abc import Sequence
-import os
+from io import BytesIO
 
 import discord
-import pytz
-from dateutil import tz
 from discord.ext import commands
-from discord.raw_models import RawReactionActionEvent
 
-from utils.logging_helper import log_event
+from utils.base import BaseCog
+from utils.helpers import fetch_message, format_local
+from utils.settings import OWNER_ID
 
-logger = logging.getLogger("ZicklaaBotRewrite.Fav")
+SAVE_EMOJI = "🦶"
+DELETE_EMOJI = "🗑️"
+MAX_NAME_LEN = 250
+NAME_TIMEOUT = 3600  # Sekunden, die der Bot auf den Fav-Namen wartet
+
+# Der alte Bot („Der Gelbfus Cowboy“) darf keine Favs löschen
+IGNORED_DELETE_USER_ID = 571051961256902671
 
 
-class Fav(commands.Cog):
-    def __init__(self, bot, db):
-        self.bot = bot
-        self.db = db
-        self.cursor = db.cursor()
+class Fav(BaseCog):
+    """Cog: Favoriten."""
 
-    # ------------------------------------------------------
-    # Reaction Event Listener
-    # ------------------------------------------------------
+    def __init__(self, bot: commands.Bot):
+        super().__init__(bot)
+        self.db = bot.db
+
+    # -------------------- Hilfsmethoden --------------------
+
+    @staticmethod
+    def _footer(fav: tuple, message: discord.Message, owner: str) -> str:
+        """Fußzeile eines Favs; die ID steht vorne, damit 🗑️ sie wiederfindet."""
+        return f"{fav[0]} | {format_local(message.created_at)} | #{message.channel.name} | by: {owner} | Name: {fav[3]}"
+
+    def _build_embed(self, message: discord.Message, footer: str) -> discord.Embed:
+        embed = discord.Embed(
+            description=message.content or "Kein Text in der Originalnachricht!",
+            color=0x00FF00,
+        )
+        if message.attachments:
+            embed.set_image(url=message.attachments[0].url)
+        embed.set_author(
+            name=message.author.name,
+            icon_url=message.author.display_avatar.url,
+            url=message.jump_url,
+        )
+        embed.set_footer(text=footer)
+        return embed
+
+    async def _not_found(self, ctx: commands.Context):
+        """Kein Fav gefunden: als Slash-Command per Text, sonst per Reaktion."""
+        if ctx.interaction:
+            await ctx.send("⛔🔍 Nix gefunden.", ephemeral=True)
+        else:
+            await ctx.message.add_reaction("⛔")
+            await ctx.message.add_reaction("🔍")
+
+    # -------------------- Reaktionen --------------------
+
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload: RawReactionActionEvent):
-        message_id, channel_id, emoji, user_id = self.parse_raw_reaction_event(
-            payload)
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        emoji = str(payload.emoji)
+        try:
+            if emoji == DELETE_EMOJI:
+                await self._delete_fav(payload)
+            elif emoji == SAVE_EMOJI:
+                await self._save_fav(payload)
+        except Exception as e:
+            self.log("Fav reaction failed", user_id=payload.user_id, emoji=emoji, message_id=payload.message_id, error=e)
 
-        # 🗑️ = Delete Fav
-        if str(emoji) == "🗑️":
-            try:
-                if user_id != 571051961256902671:
-                    channel = self.bot.get_channel(channel_id)
-                    msg = await channel.fetch_message(message_id)
-                    if msg.embeds:
-                        embedFromMessage = msg.embeds[0]
-                        footer = embedFromMessage.footer.text
+    async def _delete_fav(self, payload: discord.RawReactionActionEvent):
+        """🗑️ auf einem Fav-Embed: löscht den Fav, wenn er dem Reagierenden gehört."""
+        if payload.user_id == IGNORED_DELETE_USER_ID:
+            return
+        message = await fetch_message(self.bot, payload.channel_id, payload.message_id)
+        if not message.embeds or not message.embeds[0].footer.text:
+            return
 
-                        split_footer = footer.split()
-                        fav_id = split_footer[0]
-                        fav = self.cursor.execute(
-                            "SELECT * FROM favs WHERE id=?", (fav_id,)
-                        ).fetchone()
-                        if fav and fav[1] == user_id:
-                            self.cursor.execute(
-                                "DELETE FROM favs WHERE id=?", (fav_id,))
-                            self.db.commit()
-                            log_event(
-                                logger,
-                                logging.INFO,
-                                self.__class__.__name__,
-                                "Fav deleted",
-                                user_id=user_id,
-                                fav_id=fav_id,
-                                message_id=message_id,
-                            )
-            except Exception as e:
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    self.__class__.__name__,
-                    "Fav delete failed",
-                    user_id=user_id,
-                    message_id=message_id,
-                    error=e,
-                    exc_info=True,
-                )
+        # Die Fav-ID ist das erste Wort der Fußzeile
+        fav_id = message.embeds[0].footer.text.split()[0]
+        if not fav_id.isdigit():
+            return
+        deleted = self.db.execute(
+            "DELETE FROM favs WHERE id=? AND user_id=?", (fav_id, payload.user_id)
+        ).rowcount
+        self.db.commit()
+        if deleted:
+            self.log("Fav deleted", user_id=payload.user_id, fav_id=fav_id, message_id=payload.message_id)
 
-        # 🦶 = Save Fav
-        if str(emoji) == "🦶":
-            try:
-                user = await self.bot.fetch_user(payload.user_id)
-                dm_channel = await user.create_dm()
-                await dm_channel.send("Antworte bitte mit dem gewünschten Namen für den Fav.")
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "DM sent for fav name",
-                    user,
-                    user.id,
-                    command="reaction_add",
-                )
+    async def _save_fav(self, payload: discord.RawReactionActionEvent):
+        """🦶 auf einer Nachricht: fragt per DM nach dem Namen und speichert den Fav."""
+        user = self.bot.get_user(payload.user_id) or await self.bot.fetch_user(payload.user_id)
+        dm_channel = await user.create_dm()
+        await dm_channel.send("Antworte bitte mit dem gewünschten Namen für den Fav.")
+        self.log("DM sent for fav name", user)
 
-                response = await self.bot.wait_for("message", check=message_check(channel=dm_channel))
-                name = response.content
-                if len(name) < 250:
-                    sql = "INSERT INTO favs (user_id, message_id, name, channel_id) VALUES (?, ?, ?, ?)"
-                    val = (user_id, message_id, name, channel_id)
-                    self.cursor.execute(sql, val)
-                    self.db.commit()
-                    await response.add_reaction("👍")
-                    log_event(
-                        logger,
-                        logging.INFO,
-                        self.__class__.__name__,
-                        "Fav created",
-                        response.author,
-                        response.author.id,
-                        fav_name=name,
-                        message_id=message_id,
-                    )
-                else:
-                    await response.reply("Zu lang. Bidde unter 250chars")
-                    log_event(
-                        logger,
-                        logging.WARNING,
-                        self.__class__.__name__,
-                        "Fav name too long",
-                        response.author,
-                        response.author.id,
-                        fav_name=name,
-                    )
-            except Exception as e:
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    self.__class__.__name__,
-                    "Fav save failed",
-                    user_id=user_id,
-                    error=e,
-                    exc_info=True,
-                )
+        try:
+            response = await self.bot.wait_for(
+                "message",
+                check=lambda m: m.channel == dm_channel and not m.author.bot,
+                timeout=NAME_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            return
 
-    # ------------------------------------------------------
-    # /fav -> eigenen Fav abrufen
-    # ------------------------------------------------------
+        name = response.content
+        if len(name) >= MAX_NAME_LEN:
+            await response.reply(f"Zu lang. Bidde unter {MAX_NAME_LEN}chars")
+            self.log("Fav name too long", user, level=logging.WARNING, fav_name=name)
+            return
+
+        self.db.execute(
+            "INSERT INTO favs (user_id, message_id, name, channel_id) VALUES (?, ?, ?, ?)",
+            (payload.user_id, payload.message_id, name, payload.channel_id),
+        )
+        self.db.commit()
+        await response.add_reaction("👍")
+        self.log("Fav created", user, fav_name=name, message_id=payload.message_id)
+
+    # -------------------- Commands --------------------
+
     @commands.hybrid_command(description="Hole dir einen gespeicherten Fav.")
-    async def fav(self, ctx, *, name: str = None):
-        try:
-            if name:
-                name = f"%{name}%"
-                fav = self.cursor.execute(
-                    "SELECT * FROM favs WHERE user_id=? AND name LIKE ? ORDER BY RANDOM()",
-                    (ctx.author.id, name),
-                ).fetchone()
-            else:
-                fav = self.cursor.execute(
-                    "SELECT * FROM favs WHERE user_id=? ORDER BY RANDOM()",
-                    (ctx.author.id,),
-                ).fetchone()
+    async def fav(self, ctx: commands.Context, *, name: str = None):
+        """Eigener Fav: zufällig oder per Namens-Suche."""
+        if name:
+            query, params = "user_id=? AND name LIKE ?", (ctx.author.id, f"%{name}%")
+        else:
+            query, params = "user_id=?", (ctx.author.id,)
+        fav = self.db.execute(f"SELECT * FROM favs WHERE {query} ORDER BY RANDOM()", params).fetchone()
+        if not fav:
+            return await self._not_found(ctx)
 
-            if fav:
-                try:
-                    channel = self.bot.get_channel(fav[4])
-                    fav_message = await channel.fetch_message(fav[2])
+        await ctx.defer()  # Nachricht laden kann länger als 3 s dauern
+        message = await fetch_message(self.bot, fav[4], fav[2])
+        await ctx.send(embed=self._build_embed(message, self._footer(fav, message, ctx.author.name)))
+        self.log("Fav posted", ctx, fav_id=fav[0], channel_id=fav[4])
 
-                    current_time = fav_message.created_at.astimezone(
-                        tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
-
-                    content = fav_message.content
-                    if not content:
-                        content = "Kein Text in der Originalnachricht!"
-
-                    embed = discord.Embed(
-                        title="",
-                        description=content,
-                        color=0x00FF00
-                    )
-                    if fav_message.attachments:
-                        embed.set_image(
-                            url=str(fav_message.attachments[0].url))
-
-                    embed.set_author(
-                        name=fav_message.author.name,
-                        icon_url=fav_message.author.display_avatar.url,
-                        url=fav_message.jump_url,
-                    )
-                    embed.set_footer(
-                        text=f"{fav[0]} | {current_time} | #{fav_message.channel.name} | by: {ctx.author.name} | Name: {fav[3]}"
-                    )
-                    await ctx.send(embed=embed)
-                    log_event(
-                        logger,
-                        logging.INFO,
-                        self.__class__.__name__,
-                        "Fav posted",
-                        ctx.author,
-                        ctx.author.id,
-                        command="/fav",
-                        fav_id=fav[0],
-                        channel_id=fav[4],
-                    )
-                except Exception as e:
-                    await ctx.reply("Klappt nit lol 🤷")
-                    log_event(
-                        logger,
-                        logging.ERROR,
-                        self.__class__.__name__,
-                        "Fav send failed",
-                        ctx.author,
-                        ctx.author.id,
-                        command="/fav",
-                        error=e,
-                        exc_info=True,
-                    )
-            else:
-                await ctx.message.add_reaction("⛔")
-                await ctx.message.add_reaction("🔍")
-        except Exception as e:
-            await ctx.reply("Klappt nit lol 🤷")
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Fav command failed",
-                ctx.author,
-                ctx.author.id,
-                command="/fav",
-                error=e,
-                exc_info=True,
-            )
-
-    # ------------------------------------------------------
-    # /rfav -> Random Fav von allen Usern
-    # ------------------------------------------------------
     @commands.hybrid_command(description="Zeige einen zufälligen Fav von allen Usern.")
-    async def rfav(self, ctx):
+    async def rfav(self, ctx: commands.Context):
+        """Zufälliger Fav irgendeines Users."""
+        fav = self.db.execute("SELECT * FROM favs ORDER BY RANDOM()").fetchone()
+        if not fav:
+            return await self._not_found(ctx)
+
+        await ctx.defer()
         try:
-            fav = self.cursor.execute(
-                "SELECT * FROM favs ORDER BY RANDOM()").fetchone()
-            if fav:
-                try:
-                    channel = self.bot.get_channel(fav[4])
-                    fav_message = await channel.fetch_message(fav[2])
-
-                    current_time = fav_message.created_at.astimezone(
-                        tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
-
-                    embed = discord.Embed(
-                        title="", description=fav_message.content, color=0x00FF00
-                    )
-                    if fav_message.attachments:
-                        embed.set_image(
-                            url=str(fav_message.attachments[0].url))
-
-                    embed.set_author(
-                        name=fav_message.author.name,
-                        icon_url=fav_message.author.display_avatar.url,
-                        url=fav_message.jump_url,
-                    )
-                    embed.set_footer(
-                        text=f"{current_time} | #{fav_message.channel.name} | Randomized by: {ctx.author.name}"
-                    )
-                    await ctx.send(embed=embed)
-                    log_event(
-                        logger,
-                        logging.INFO,
-                        self.__class__.__name__,
-                        "Random fav posted",
-                        ctx.author,
-                        ctx.author.id,
-                        command="/fav",
-                        fav_id=fav[0],
-                        channel_id=fav[4],
-                    )
-                except Exception as e:
-                    await ctx.reply(
-                        f"Klappt nit lol 🤷 Eventuell existiert der originale Kommentar nichtmehr. ID: {fav[0]} <@288413759117066241>"
-                    )
-                    log_event(
-                        logger,
-                        logging.ERROR,
-                        self.__class__.__name__,
-                        "Random fav failed",
-                        ctx.author,
-                        ctx.author.id,
-                        command="/fav",
-                        error=e,
-                        exc_info=True,
-                    )
-        except Exception as e:
-            await ctx.reply("Klappt nit lol 🤷")
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Fav command failed",
-                ctx.author,
-                ctx.author.id,
-                command="/fav",
-                error=e,
-                exc_info=True,
+            message = await fetch_message(self.bot, fav[4], fav[2])
+        except discord.HTTPException as e:
+            self.log("Random fav failed", ctx, fav_id=fav[0], error=e)
+            return await ctx.reply(
+                f"Klappt nit lol 🤷 Eventuell existiert der originale Kommentar nichtmehr. ID: {fav[0]} <@{OWNER_ID}>"
             )
 
-    # ------------------------------------------------------
-    # /allfavs -> Export als TXT per DM
-    # ------------------------------------------------------
+        footer = f"{format_local(message.created_at)} | #{message.channel.name} | Randomized by: {ctx.author.name}"
+        await ctx.send(embed=self._build_embed(message, footer))
+        self.log("Random fav posted", ctx, fav_id=fav[0], channel_id=fav[4])
+
     @commands.hybrid_command(description="Exportiere alle deine Favs als Textdatei.")
-    async def allfavs(self, ctx):
-        try:
-            all_favs = self.cursor.execute(
-                "SELECT * FROM favs WHERE user_id=?", (ctx.author.id,)
-            )
-            if all_favs:
-                dm_channel = await ctx.author.create_dm()
-                await ctx.message.delete()
-                await dm_channel.send("Moin 👋 Ich sammele alle deine Favs für dich...")
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "DM sent for allfavs",
-                    ctx.author,
-                    ctx.author.id,
-                    command="/allfavs",
-                )
+    async def allfavs(self, ctx: commands.Context):
+        """Schickt alle eigenen Favs als Textdatei per DM."""
+        favs = self.db.execute("SELECT * FROM favs WHERE user_id=?", (ctx.author.id,)).fetchall()
+        if not favs:
+            return await self._not_found(ctx)
 
-                path = f"allfavs/{ctx.author.id}.txt"
+        # Slash: ephemer bestätigen; Prefix: den Aufruf aus dem Channel entfernen
+        if ctx.interaction:
+            await ctx.send("📬 Ich schick dir deine Favs per DM.", ephemeral=True)
+        else:
+            await ctx.message.delete()
 
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+        dm_channel = await ctx.author.create_dm()
+        await dm_channel.send("Moin 👋 Ich sammele alle deine Favs für dich...")
+        self.log("DM sent for allfavs", ctx)
 
-                whole_message = ""
-                for fav in all_favs:
-                    try:
-                        channel = self.bot.get_channel(fav[4])
-                        fav_message = await channel.fetch_message(fav[2])
+        entries = []
+        for fav in favs:
+            try:
+                message = await fetch_message(self.bot, fav[4], fav[2])
+            except Exception as e:
+                self.log("Allfavs fetch failed", ctx, fav_id=fav[0], error=e)
+                continue
+            # Pro Fav: Autor, Text, Anhang-Link (jeweils falls vorhanden), Fußzeile
+            lines = [
+                message.author.name,
+                message.content,
+                message.attachments[0].url if message.attachments else "",
+                self._footer(fav, message, ctx.author.name),
+            ]
+            entries.append("\n".join(line for line in lines if line))
 
-                        current_time = fav_message.created_at.astimezone(
-                            tz.tzlocal()).strftime("%d.%m.%Y, %H:%M:%S")
-                        author = fav_message.author.name
-                        text = fav_message.content
-                        bottom_text = (
-                            f"{fav[0]} | {current_time} | #{fav_message.channel.name} | by: {ctx.author.name} | Name: {fav[3]}"
-                        )
-
-                        if fav_message.content:
-                            if fav_message.attachments:
-                                url = str(fav_message.attachments[0].url)
-                                message = f"{author}\n{text}\n{url}\n{bottom_text}\n\n"
-                            else:
-                                message = f"{author}\n{text}\n{bottom_text}\n\n"
-                        else:
-                            if fav_message.attachments:
-                                url = str(fav_message.attachments[0].url)
-                                message = f"{author}\n{url}\n{bottom_text}\n\n"
-                            else:
-                                message = f"{author}\n{bottom_text}\n\n"
-
-                        whole_message += message
-                    except Exception as e:
-                        log_event(
-                            logger,
-                            logging.ERROR,
-                            self.__class__.__name__,
-                            "Allfavs fetch failed",
-                            ctx.author,
-                            ctx.author.id,
-                            command="/allfavs",
-                            fav_id=fav[0],
-                            error=e,
-                            exc_info=True,
-                        )
-
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(whole_message)
-
-                await dm_channel.send(file=discord.File(path))
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "Allfavs DM sent",
-                    ctx.author,
-                    ctx.author.id,
-                    command="/allfavs",
-                    file=path,
-                )
-            else:
-                await ctx.message.add_reaction("⛔")
-                await ctx.message.add_reaction("🔍")
-        except Exception as e:
-            await ctx.reply("Klappt nit lol 🤷")
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Allfavs command failed",
-                ctx.author,
-                ctx.author.id,
-                command="/allfavs",
-                error=e,
-                exc_info=True,
-            )
-
-    # ------------------------------------------------------
-    # Hilfsfunktionen
-    # ------------------------------------------------------
-    def parse_raw_reaction_event(self, payload: RawReactionActionEvent):
-        return payload.message_id, payload.channel_id, payload.emoji, payload.user_id
+        export = BytesIO(("\n\n".join(entries) + "\n\n").encode("utf-8"))
+        await dm_channel.send(file=discord.File(export, f"{ctx.author.id}.txt"))
+        self.log("Allfavs DM sent", ctx, favs=len(entries))
 
 
-async def setup(bot):
-    await bot.add_cog(Fav(bot, bot.db))
-
-
-def make_sequence(seq):
-    if seq is None:
-        return ()
-    if isinstance(seq, Sequence) and not isinstance(seq, str):
-        return seq
-    else:
-        return (seq,)
-
-
-def message_check(channel=None, author=None, content=None, ignore_bot=True, lower=True):
-    channel = make_sequence(channel)
-    author = make_sequence(author)
-    content = make_sequence(content)
-    if lower:
-        content = tuple(c.lower() for c in content)
-
-    def check(message):
-        if ignore_bot and message.author.bot:
-            return False
-        if channel and message.channel not in channel:
-            return False
-        if author and message.author not in author:
-            return False
-        actual_content = message.content.lower() if lower else message.content
-        if content and actual_content not in content:
-            return False
-        return True
-
-    return check
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Fav(bot))

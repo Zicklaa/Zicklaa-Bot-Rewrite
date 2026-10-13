@@ -1,204 +1,72 @@
-# chefkoch_cog.py
-# -*- coding: utf-8 -*-
-"""
-Chefkoch-Cog (discord.py 2.x, Slash-Commands)
-- /chefkoch suchen <zutaten>  : Sucht Rezepte auf Chefkoch und gibt 1 zufälligen Treffer zurück
-- /chefkoch rotd              : "Recipe of the Day"
-"""
+"""/chefkoch suchen|rotd – Rezepte von Chefkoch."""
 
-from __future__ import annotations
-
-import logging
+import asyncio
 import random
 
 import discord
-from utils.logging_helper import log_event
 from discord import app_commands
 from discord.ext import commands
+from get_chefkoch import Search  # type: ignore
 
-# Externes Modul (deins)
-from get_chefkoch import Recipe, Search  # type: ignore
+from utils.base import BaseCog, UserError
 
-logger = logging.getLogger("ZicklaaBotRewrite.Chefkoch")
+MAX_QUERY_LEN = 100   # Zeichenlimit für den Suchstring
+MAX_RESULTS_PICK = 5  # aus den ersten 5 Treffern wird zufällig einer gewählt
 
-# Konfiguration
-MAX_QUERY_LEN = 100        # Zeichenlimit für Suchstring
-MAX_RESULTS_PICK = 5       # wir ziehen max. aus den ersten 5 Treffern zufällig eins
+ERROR_TEXT = "❌ Da ist was schiefgelaufen. Versuch's gleich nochmal."
 
 
-class Chefkoch(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
+class Chefkoch(BaseCog):
+    """Cog: /chefkoch."""
 
-    # -------- Slash-Befehle als Command-Group --------
     chefkoch = app_commands.Group(
         name="chefkoch",
         description="Chefkoch-Helfer: Rezepte suchen oder das Recipe of the Day holen.",
-        guild_only=False,  # falls nur im Server gewünscht -> True und zusätzlich @app_commands.guild_only() je Subcommand
     )
 
-    # /chefkoch suchen
-    @chefkoch.command(name="suchen", description="Suche nach einem Rezept (z. B. 'nudeln lachs spinat').")
+    @chefkoch.command(
+        name="suchen",
+        description="Suche nach einem Rezept (z. B. 'nudeln lachs spinat').",
+        extras={"error": ERROR_TEXT},
+    )
     @app_commands.describe(zutaten="Wörter oder Zutaten, z. B.: 'nudeln lachs spinat'")
     async def suchen(self, interaction: discord.Interaction, zutaten: str):
-        """Sucht Chefkoch nach Rezepten und gibt einen zufälligen Link zurück."""
-        try:
-            query = (zutaten or "").strip().lower()
+        """Sucht auf Chefkoch und gibt einen zufälligen der ersten Treffer zurück."""
+        query = zutaten.strip().lower()
+        if not query:
+            raise UserError("⚠️ Bitte gib mindestens **eine** Zutat/ein Stichwort an.")
+        if len(query) > MAX_QUERY_LEN:
+            raise UserError(f"⚠️ Deine Eingabe ist zu lang (>{MAX_QUERY_LEN} Zeichen). Kürze sie bitte.")
 
-            if not query:
-                await interaction.response.send_message(
-                    "⚠️ Bitte gib mindestens **eine** Zutat/ein Stichwort an.",
-                    ephemeral=True,
-                )
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    self.__class__.__name__,
-                    "Empty search input",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/chefkoch suchen",
-                )
-                return
+        await interaction.response.defer(thinking=True)
 
-            if len(query) > MAX_QUERY_LEN:
-                await interaction.response.send_message(
-                    f"⚠️ Deine Eingabe ist zu lang (>{MAX_QUERY_LEN} Zeichen). Kürze sie bitte.",
-                    ephemeral=True,
-                )
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    self.__class__.__name__,
-                    "Search query too long",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/chefkoch suchen",
-                    length=len(query),
-                )
-                return
+        # get_chefkoch arbeitet synchron -> in einen Thread auslagern
+        results = await asyncio.to_thread(lambda: list(Search(query).recipes(limit=MAX_RESULTS_PICK)))
+        if not results:
+            raise UserError("😕 Keine Rezepte gefunden. Versuch andere Begriffe.")
 
-            # falls API mal langsamer ist
-            await interaction.response.defer(thinking=True)
+        url = random.choice(results)._url
+        if not url:
+            raise UserError("😕 Unerwartetes Ergebnisformat. Probier es später nochmal.")
 
-            suche = Search(query)
-            results: list[Recipe] = list(suche.recipes(
-                limit=MAX_RESULTS_PICK))  # type: ignore
+        await interaction.followup.send(f"{url}\n**SCHMEEECKT :DDD**")
+        self.log("Recipe link sent", interaction, query=query, url=url)
 
-            if not results:
-                await interaction.followup.send("😕 Keine Rezepte gefunden. Versuch andere Begriffe.")
-                log_event(
-                    logger,
-                    logging.INFO,
-                    self.__class__.__name__,
-                    "No recipes found",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/chefkoch suchen",
-                    query=query,
-                )
-                return
-
-            url = random.choice(results)._url
-
-            if not url:
-                await interaction.followup.send("😕 Unerwartetes Ergebnisformat. Probier es später nochmal.")
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    self.__class__.__name__,
-                    "Search result missing URL",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/chefkoch suchen",
-                    query=query,
-                )
-                return
-
-            await interaction.followup.send(f"{url}\n**SCHMEEECKT :DDD**")
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Recipe link sent",
-                interaction.user,
-                interaction.user.id,
-                command="/chefkoch suchen",
-                query=query,
-                url=url,
-            )
-
-        except Exception as e:
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Search failed",
-                interaction.user,
-                interaction.user.id,
-                command="/chefkoch suchen",
-                query=zutaten,
-                error=e,
-                exc_info=True,
-            )
-            if interaction.response.is_done():
-                await interaction.followup.send("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
-            else:
-                await interaction.response.send_message("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
-
-    # /chefkoch rotd
-    @chefkoch.command(name="rotd", description="Hol das 'Recipe of the Day' von Chefkoch.")
+    @chefkoch.command(
+        name="rotd",
+        description="Hol das 'Recipe of the Day' von Chefkoch.",
+        extras={"error": ERROR_TEXT},
+    )
     async def rotd(self, interaction: discord.Interaction):
-        """Recipe of the Day (Chefkoch)."""
-        try:
-            await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True)
 
-            recipe: Recipe = Search().recipeOfTheDay()
-            url = recipe._url
+        recipe = await asyncio.to_thread(lambda: Search().recipeOfTheDay())
+        if not recipe._url:
+            raise UserError("😕 Konnte das Rezept des Tages nicht abrufen.")
 
-            if not url:
-                await interaction.followup.send("😕 Konnte das Rezept des Tages nicht abrufen.")
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    self.__class__.__name__,
-                    "Recipe of the day missing URL",
-                    interaction.user,
-                    interaction.user.id,
-                    command="/chefkoch rotd",
-                )
-                return
-
-            await interaction.followup.send(f"**Recipe of the Day** 🍽️\n{url}\n**SCHMEEECKT :DDD**")
-            log_event(
-                logger,
-                logging.INFO,
-                self.__class__.__name__,
-                "Recipe of the day sent",
-                interaction.user,
-                interaction.user.id,
-                command="/chefkoch rotd",
-                url=url,
-            )
-
-        except Exception as e:
-            log_event(
-                logger,
-                logging.ERROR,
-                self.__class__.__name__,
-                "Recipe of the day failed",
-                interaction.user,
-                interaction.user.id,
-                command="/chefkoch rotd",
-                error=e,
-                exc_info=True,
-            )
-            if interaction.response.is_done():
-                await interaction.followup.send("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
-            else:
-                await interaction.response.send_message("❌ Da ist was schiefgelaufen. Versuch's gleich nochmal.", ephemeral=True)
+        await interaction.followup.send(f"**Recipe of the Day** 🍽️\n{recipe._url}\n**SCHMEEECKT :DDD**")
+        self.log("Recipe of the day sent", interaction, url=recipe._url)
 
 
-# --------- Setup (discord.py 2.x) ---------
 async def setup(bot: commands.Bot):
     await bot.add_cog(Chefkoch(bot))
