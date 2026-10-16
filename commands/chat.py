@@ -8,6 +8,7 @@ import discord
 import fal_client
 from discord import app_commands
 from discord.ext import commands
+import openai
 from openai import AsyncOpenAI
 
 from utils.base import BaseCog, BaseView, UserError, in_channels
@@ -19,6 +20,12 @@ from utils.settings import SPAM_CHANNEL_ID, TEST_CHANNEL_ID
 allowed_channels = in_channels(SPAM_CHANNEL_ID, TEST_CHANNEL_ID)
 
 CHAT_MODEL = "gpt-5-mini"
+# Preise für CHAT_MODEL in US-Dollar pro 1 Mio. Tokens (Stand 10/2026, openai.com/api/pricing)
+PRICE_INPUT = 0.25
+PRICE_CACHED_INPUT = 0.025
+PRICE_OUTPUT = 2.00
+# Websuche: 10 $ pro 1.000 Aufrufe; die Suchergebnisse zählen als normale Input-Tokens
+PRICE_WEB_SEARCH = 0.01
 TTS_MODEL = "tts-1-hd"
 TTS_VOICES = ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
 
@@ -58,6 +65,36 @@ EMBED_DESC = 4096
 EMBED_FIELD_VALUE = 1024
 
 # -------------------- Paginierte Antwort --------------------
+
+
+def format_cost(usage, web_searches: int = 0) -> str | None:
+    """Kosten einer Anfrage für den Footer, z. B. „1.234 Tokens ≈ 0,1825 US-Cent“.
+
+    Versteht sowohl die Usage der Responses-API (input/output_tokens) als auch
+    die der Chat-Completions-API (prompt/completion_tokens). Reasoning-Tokens
+    stecken im Output und werden wie Output berechnet.
+    """
+    if usage is None:
+        return None
+    input_tokens = getattr(usage, "input_tokens", None)
+    if input_tokens is None:
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+        details = getattr(usage, "prompt_tokens_details", None)
+    else:
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+        details = getattr(usage, "input_tokens_details", None)
+    cached = getattr(details, "cached_tokens", 0) or 0
+
+    dollars = (
+        (input_tokens - cached) * PRICE_INPUT
+        + cached * PRICE_CACHED_INPUT
+        + output_tokens * PRICE_OUTPUT
+    ) / 1_000_000 + web_searches * PRICE_WEB_SEARCH
+    cents = f"{dollars * 100:.4f}".replace(".", ",")
+    tokens = f"{input_tokens + output_tokens:,}".replace(",", ".")
+    searches = f" + {web_searches} Websuche{'n' if web_searches != 1 else ''}" if web_searches else ""
+    return f"Kosten: {tokens} Tokens{searches} ≈ {cents} US-Cent"
 
 
 def build_paginated_embeds(title: str, prompt: str, answer: str, footer_extra: str) -> list[discord.Embed]:
@@ -127,24 +164,36 @@ class Chat(BaseCog):
             raise RuntimeError("FAL_KEY nicht gesetzt.")
         self.oai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Bekannte OpenAI-Fehler als verständliche Meldung statt des generischen Fehlertexts."""
+        original = getattr(error, "original", error)
+        if isinstance(original, openai.RateLimitError):
+            if getattr(original, "code", None) in ("insufficient_quota", "credit_balance_exhausted"):
+                error = UserError("💸 Das OpenAI-Guthaben ist aufgebraucht. Erst wieder aufladen, dann klappt's.")
+            else:
+                error = UserError("⏳ OpenAI ist gerade überlastet, probier's gleich nochmal.")
+        elif isinstance(original, (openai.APIConnectionError, openai.InternalServerError)):
+            error = UserError("📡 OpenAI ist gerade nicht erreichbar, probier's später nochmal.")
+        await super().cog_app_command_error(interaction, error)
+
     # ---------- Helper ----------
 
-    async def _complete(self, system: str, user: str) -> tuple[str, int | None]:
-        """Chat-Completion; gibt (Antworttext, verbrauchte Tokens) zurück."""
+    async def _complete(self, system: str, user: str) -> tuple[str, object]:
+        """Chat-Completion; gibt (Antworttext, Usage) zurück."""
         completion = await self.oai.chat.completions.create(
             model=CHAT_MODEL,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
         text = (completion.choices[0].message.content or "").strip()
-        return text, getattr(completion.usage, "total_tokens", None)
+        return text, completion.usage
 
     async def _send_answer(
-        self, interaction: discord.Interaction, *, title: str, prompt: str, answer: str, tokens: int | None
+        self, interaction: discord.Interaction, *, title: str, prompt: str, answer: str, cost: str | None
     ):
         """Schickt die Antwort als blätterbares Embed (Footer: Uhrzeit + Kosten)."""
         footer = f"{datetime.now():%H:%M:%S} Uhr"
-        if tokens is not None:
-            footer += f" • Kosten: {tokens} Tokens = {round(tokens * 0.000125, 8)} Cent"
+        if cost:
+            footer += f" • {cost}"
 
         embeds = build_paginated_embeds(title, prompt, answer, footer)
         await interaction.followup.send(
@@ -191,14 +240,14 @@ class Chat(BaseCog):
             ],
             **({"tools": [{"type": "web_search"}]} if websearch else {}),
         )
-        usage = getattr(resp, "usage", None)
+        searches = sum(1 for item in resp.output if item.type == "web_search_call")
 
         await self._send_answer(
             interaction,
             title="Antwort von ChatGPT: ",
             prompt=text + ("\n\n[Websuche: aktiviert]" if websearch else ""),
             answer=resp.output_text or "—",
-            tokens=getattr(usage, "total_tokens", None),
+            cost=format_cost(resp.usage, searches),
         )
 
     @app_commands.command(
@@ -210,12 +259,12 @@ class Chat(BaseCog):
         await interaction.response.defer(thinking=True)
 
         seed = self.bot.hivemind_sentence(max_overlap_ratio=0.65)
-        answer, tokens = await self._complete(HIVEMIND_SYSTEM_PROMPT, seed)
+        answer, usage = await self._complete(HIVEMIND_SYSTEM_PROMPT, seed)
 
         # Erst den Hivemind-Satz posten, dann die Antwort darauf
         await interaction.followup.send(seed, allowed_mentions=NO_MENTIONS)
         await self._send_answer(
-            interaction, title="Antwort (Hivemind)", prompt=seed, answer=answer or "—", tokens=tokens
+            interaction, title="Antwort (Hivemind)", prompt=seed, answer=answer or "—", cost=format_cost(usage)
         )
         self.log("HMChat sent", interaction)
 
