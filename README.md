@@ -138,6 +138,11 @@ python bot.py
 - ⭐‑Reaktionen ab `THRESHOLD` posten automatisch ins Sternbrett; Anhänge
   landen zusätzlich im Ordner für `/ltb`.
 - `/star <link>` – Nachricht manuell ins Sternbrett posten (nur Owner).
+- `/sternbrett [jahr] [ansicht] [privat]` – Auswertung des Sternbretts mit Diagramm:
+  meistgesternte Posts (Top 10 + Siegerpost), Sternsammler und Überblick pro
+  Jahr/Monat; Jahr und Ansicht lassen sich per Menü umschalten. Die ⭐‑Zahlen der
+  Originale werden in `star_stats` gecacht (erster Abruf nach dem Start dauert
+  einige Minuten, danach nur noch inkrementell). Nur für den Owner.
 
 ### Fußball & Info
 - `/buli` – nächster Bundesliga‑Spieltag (Football‑Data API).
