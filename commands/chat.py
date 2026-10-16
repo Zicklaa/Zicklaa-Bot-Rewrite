@@ -19,20 +19,21 @@ from utils.settings import SPAM_CHANNEL_ID, TEST_CHANNEL_ID
 
 allowed_channels = in_channels(SPAM_CHANNEL_ID, TEST_CHANNEL_ID)
 
-CHAT_MODEL = "gpt-5-mini"
+CHAT_MODEL = "gpt-6-luna"
 # Denkaufwand je Zweck: weniger Reasoning = schneller und billiger.
-# "minimal" geht nicht zusammen mit Websuche, deshalb /chat auf "low".
+# Erlaubt: none, low, medium (Standard), high, xhigh, max ("minimal" gibt es bei GPT-6 nicht mehr).
 EFFORT_CHAT = "low"
-EFFORT_SIMPLE = "minimal"  # /hmchat und Bild-Prompt-Optimierung
+EFFORT_SIMPLE = "none"  # /hmchat und Bild-Prompt-Optimierung
 # Websuche mit Standort Deutschland -> deutsche Quellen und Ortsbezug
 WEB_SEARCH_TOOL = {
     "type": "web_search",
     "user_location": {"type": "approximate", "country": "DE", "timezone": "Europe/Berlin"},
 }
-# Preise für CHAT_MODEL in US-Dollar pro 1 Mio. Tokens (Stand 10/2026, openai.com/api/pricing)
-PRICE_INPUT = 0.25
-PRICE_CACHED_INPUT = 0.025
-PRICE_OUTPUT = 2.00
+# Preise für CHAT_MODEL in US-Dollar pro 1 Mio. Tokens (Stand 10/2026, developers.openai.com/api/docs/pricing)
+# Gelten bis 272K Input-Tokens; darüber wird es teurer, kommt bei Discord-Prompts aber nicht vor.
+PRICE_INPUT = 0.10
+PRICE_CACHED_INPUT = 0.01
+PRICE_OUTPUT = 0.50
 # Websuche: 10 $ pro 1.000 Aufrufe; die Suchergebnisse zählen als normale Input-Tokens
 PRICE_WEB_SEARCH = 0.01
 TTS_MODEL = "gpt-4o-mini-tts"
