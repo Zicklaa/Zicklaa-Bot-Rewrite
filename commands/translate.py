@@ -1,12 +1,19 @@
-"""/translate – übersetzt Text per Google Translate (deep_translator)."""
+"""/translate – übersetzt Text per Google Translate.
+
+Übersetzt wird über den Endpunkt translate.googleapis.com (client=gtx). Die
+Scraping-Seite translate.google.com/m, die deep_translator nutzt, blockt Google
+für Server-IPs mit einer CAPTCHA-Seite. deep_translator liefert nur noch die
+(statische) Sprachenliste.
+"""
 
 import asyncio
 from dataclasses import dataclass
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from deep_translator import GoogleTranslator
+from deep_translator.constants import GOOGLE_LANGUAGES_TO_CODES
 
 from utils.base import BaseCog, UserError
 from utils.helpers import truncate
@@ -24,10 +31,15 @@ ALIASES = {
     "chinese": "zh-cn", "chinesisch": "zh-cn", "brazilian portuguese": "pt",
 }
 
+TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 TRANSLATE_TIMEOUT = 20  # Sekunden
+MAX_CHARS = 5000
+
+# Quellsprache automatisch erkennen lassen
+AUTO = "auto"
 
 # Vorschläge im Autocomplete, solange noch nichts getippt wurde
-DEFAULT_SUGGESTIONS = ("de", "en", "fr", "es", "it", "tr", "nl", "pl", "pt", "ru")
+DEFAULT_SUGGESTIONS = (AUTO, "de", "en", "fr", "es", "it", "tr", "nl", "pl", "pt", "ru")
 
 
 def normalize(s: str) -> str:
@@ -47,9 +59,8 @@ class LangTables:
 
 
 def load_langs() -> LangTables:
-    """Lädt die unterstützten Sprachen von Google Translate (synchron)."""
-    raw = GoogleTranslator().get_supported_languages(as_dict=True)
-    name_to_code = {normalize(name): normalize(code) for name, code in raw.items()}
+    """Baut die Sprachtabellen aus der Sprachenliste von deep_translator."""
+    name_to_code = {normalize(name): normalize(code) for name, code in GOOGLE_LANGUAGES_TO_CODES.items()}
     for name, code in ALIASES.items():
         name_to_code.setdefault(name, code)
 
@@ -68,13 +79,39 @@ class Translate(BaseCog):
         self.langs: LangTables | None = None
 
     async def cog_load(self):
-        self.langs = await asyncio.to_thread(load_langs)
+        self.langs = load_langs()
         self.log("Cog loaded", languages=len(self.langs.name_to_code))
+
+    async def google_translate(self, text: str, source: str, target: str) -> tuple[str, str]:
+        """Übersetzt Text; gibt (Übersetzung, erkannte Quellsprache) zurück."""
+        params = {"client": "gtx", "sl": source, "tl": target, "dt": "t"}
+        try:
+            # POST, damit auch lange Texte nicht an der URL-Länge scheitern
+            async with self.bot.session.post(
+                TRANSLATE_URL, params=params, data={"q": text},
+                timeout=aiohttp.ClientTimeout(total=TRANSLATE_TIMEOUT),
+            ) as resp:
+                if resp.status == 429:
+                    raise UserError("⏳ Google Translate bremst gerade, probier's gleich nochmal.")
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except asyncio.TimeoutError:
+            raise UserError("⏳ Google Translate antwortet nicht, probier's später nochmal.") from None
+
+        # data[0]: Liste von Satz-Abschnitten [Übersetzung, Original, …]; data[2]: erkannte Sprache
+        translated = "".join(part[0] for part in data[0] or [] if part and part[0])
+        detected = normalize(data[2]) if len(data) > 2 and isinstance(data[2], str) else source
+        return translated, detected
 
     def resolve_lang(self, user_input: str) -> str | None:
         """Sprachcode zu einer Eingabe (Code oder Name), sonst None."""
         key = normalize(user_input)
+        if key in (AUTO, "automatisch"):
+            return AUTO
         return key if key in self.langs.code_to_name else self.langs.name_to_code.get(key)
+
+    def lang_name(self, code: str) -> str:
+        return "automatisch erkennen" if code == AUTO else self.langs.code_to_name.get(code, code)
 
     async def lang_autocomplete(self, _: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         if not self.langs:
@@ -89,7 +126,7 @@ class Translate(BaseCog):
         else:
             codes = DEFAULT_SUGGESTIONS
         return [
-            app_commands.Choice(name=f"{code} — {self.langs.code_to_name.get(code, code)}"[:100], value=code)
+            app_commands.Choice(name=f"{code} — {self.lang_name(code)}"[:100], value=code)
             for code in codes
         ][:25]
 
@@ -99,7 +136,7 @@ class Translate(BaseCog):
         extras={"error": "❌ Konnte nicht übersetzen."},
     )
     @app_commands.describe(
-        from_lang="Quellsprache (z. B. de, en, fr – Autocomplete verfügbar)",
+        from_lang="Quellsprache (z. B. de, en, fr oder auto – Autocomplete verfügbar)",
         to_lang="Zielsprache (z. B. de, en, fr – Autocomplete verfügbar)",
         text="Zu übersetzender Text",
         ephemeral="Antwort nur für dich anzeigen",
@@ -116,20 +153,19 @@ class Translate(BaseCog):
         if not self.langs:
             raise UserError("❌ Sprachenliste noch nicht geladen.")
         source, target = self.resolve_lang(from_lang), self.resolve_lang(to_lang)
-        if not source or not target:
+        if not source or not target or target == AUTO:
             raise UserError("❌ Ungültige Sprachcodes angegeben.")
+        if len(text) > MAX_CHARS:
+            raise UserError(f"❌ Zu lang: maximal {MAX_CHARS} Zeichen.")
 
         await interaction.response.defer(thinking=True, ephemeral=ephemeral)
+        translated, detected = await self.google_translate(text, source, target)
 
-        # deep_translator arbeitet synchron und ohne eigenes Timeout -> Thread + Zeitlimit
-        translated = await asyncio.wait_for(
-            asyncio.to_thread(GoogleTranslator(source=source, target=target).translate, text),
-            timeout=TRANSLATE_TIMEOUT,
-        )
-
-        names = self.langs.code_to_name
+        source_label = f"{flag(detected)} {self.lang_name(detected)}"
+        if source == AUTO:
+            source_label += " (erkannt)"
         embed = discord.Embed(
-            title=f"{flag(source)} {names.get(source, source)} → {flag(target)} {names.get(target, target)}",
+            title=f"{source_label} → {flag(target)} {self.lang_name(target)}",
             color=discord.Color.green(),
         )
         embed.add_field(name="Original", value=truncate(text, 1000), inline=False)
@@ -137,7 +173,7 @@ class Translate(BaseCog):
         embed.set_footer(text="Google Translate")
 
         await interaction.followup.send(embed=embed)
-        self.log("Translation successful", interaction, source=source, target=target)
+        self.log("Translation successful", interaction, source=detected, target=target)
 
 
 async def setup(bot: commands.Bot):
