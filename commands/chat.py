@@ -20,14 +20,27 @@ from utils.settings import SPAM_CHANNEL_ID, TEST_CHANNEL_ID
 allowed_channels = in_channels(SPAM_CHANNEL_ID, TEST_CHANNEL_ID)
 
 CHAT_MODEL = "gpt-5-mini"
+# Denkaufwand je Zweck: weniger Reasoning = schneller und billiger.
+# "minimal" geht nicht zusammen mit Websuche, deshalb /chat auf "low".
+EFFORT_CHAT = "low"
+EFFORT_SIMPLE = "minimal"  # /hmchat und Bild-Prompt-Optimierung
+# Websuche mit Standort Deutschland -> deutsche Quellen und Ortsbezug
+WEB_SEARCH_TOOL = {
+    "type": "web_search",
+    "user_location": {"type": "approximate", "country": "DE", "timezone": "Europe/Berlin"},
+}
 # Preise für CHAT_MODEL in US-Dollar pro 1 Mio. Tokens (Stand 10/2026, openai.com/api/pricing)
 PRICE_INPUT = 0.25
 PRICE_CACHED_INPUT = 0.025
 PRICE_OUTPUT = 2.00
 # Websuche: 10 $ pro 1.000 Aufrufe; die Suchergebnisse zählen als normale Input-Tokens
 PRICE_WEB_SEARCH = 0.01
-TTS_MODEL = "tts-1-hd"
-TTS_VOICES = ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICES = (
+    "alloy", "ash", "ballad", "cedar", "coral", "echo", "fable",
+    "marin", "nova", "onyx", "sage", "shimmer", "verse",
+)
+TTS_MAX_CHARS = 4096  # API-Limit pro Anfrage
 
 # Bildmodelle (fal.ai) je Qualitätsstufe: (Modell, zusätzliche Argumente)
 IMAGE_MODELS = {
@@ -38,7 +51,7 @@ IMAGE_MODELS = {
 }
 
 CHAT_SYSTEM_PROMPT = (
-    "Du bist ein hilfreicher Assistent."
+    "Du bist ein hilfreicher Assistent. "
     "Antworte direkt, präzise und ohne unnötige Meta-Kommentare. "
     "Gib keine Gegenfragen sondern beantworte direkt nach deinem besten Wissen. "
 )
@@ -47,7 +60,7 @@ HIVEMIND_SYSTEM_PROMPT = (
     "Antwort locker mit SUPER EXTREM VIELEN Gen-Z/Gen-Alpha-Slang & Emojis. "
     "Sei dabei auch sehr nonchalant, immer am viben usw. "
     "Benutz keine förmliche Sprache und wenig bis garkeine Punktierung und Groß/Kleinschreibung. "
-    "Bau auch eventuell common Abkürzungen und Tippfehler ein bei Gelegenheit."
+    "Bau auch eventuell common Abkürzungen und Tippfehler ein bei Gelegenheit. "
     "Nie sagen, dass du KI bist."
 )
 IMAGE_PROMPT_OPTIMIZER = (
@@ -68,23 +81,15 @@ EMBED_FIELD_VALUE = 1024
 
 
 def format_cost(usage, web_searches: int = 0) -> str | None:
-    """Kosten einer Anfrage für den Footer, z. B. „1.234 Tokens ≈ 0,1825 US-Cent“.
+    """Kosten einer Anfrage (Responses-API) für den Footer, z. B. „1.234 Tokens ≈ 0,1825 US-Cent“.
 
-    Versteht sowohl die Usage der Responses-API (input/output_tokens) als auch
-    die der Chat-Completions-API (prompt/completion_tokens). Reasoning-Tokens
-    stecken im Output und werden wie Output berechnet.
+    Reasoning-Tokens stecken im Output und werden wie Output berechnet.
     """
     if usage is None:
         return None
-    input_tokens = getattr(usage, "input_tokens", None)
-    if input_tokens is None:
-        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
-        output_tokens = getattr(usage, "completion_tokens", 0) or 0
-        details = getattr(usage, "prompt_tokens_details", None)
-    else:
-        output_tokens = getattr(usage, "output_tokens", 0) or 0
-        details = getattr(usage, "input_tokens_details", None)
-    cached = getattr(details, "cached_tokens", 0) or 0
+    input_tokens = usage.input_tokens
+    output_tokens = usage.output_tokens
+    cached = getattr(usage.input_tokens_details, "cached_tokens", 0) or 0
 
     dollars = (
         (input_tokens - cached) * PRICE_INPUT
@@ -178,14 +183,16 @@ class Chat(BaseCog):
 
     # ---------- Helper ----------
 
-    async def _complete(self, system: str, user: str) -> tuple[str, object]:
-        """Chat-Completion; gibt (Antworttext, Usage) zurück."""
-        completion = await self.oai.chat.completions.create(
+    async def _ask(self, instructions: str, text: str, *, effort: str, websearch: bool = False):
+        """Eine Anfrage über die Responses-API (store=False: nichts bleibt bei OpenAI gespeichert)."""
+        return await self.oai.responses.create(
             model=CHAT_MODEL,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            instructions=instructions,
+            input=text,
+            reasoning={"effort": effort},
+            store=False,
+            **({"tools": [WEB_SEARCH_TOOL]} if websearch else {}),
         )
-        text = (completion.choices[0].message.content or "").strip()
-        return text, completion.usage
 
     async def _send_answer(
         self, interaction: discord.Interaction, *, title: str, prompt: str, answer: str, cost: str | None
@@ -232,19 +239,12 @@ class Chat(BaseCog):
         await interaction.response.defer(thinking=True)
         self.log("Chat command", interaction, websearch=websearch)
 
-        resp = await self.oai.responses.create(
-            model=CHAT_MODEL,
-            input=[
-                {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            **({"tools": [{"type": "web_search"}]} if websearch else {}),
-        )
+        resp = await self._ask(CHAT_SYSTEM_PROMPT, text, effort=EFFORT_CHAT, websearch=websearch)
         searches = sum(1 for item in resp.output if item.type == "web_search_call")
 
         await self._send_answer(
             interaction,
-            title="Antwort von ChatGPT: ",
+            title="Antwort von ChatGPT",
             prompt=text + ("\n\n[Websuche: aktiviert]" if websearch else ""),
             answer=resp.output_text or "—",
             cost=format_cost(resp.usage, searches),
@@ -259,12 +259,13 @@ class Chat(BaseCog):
         await interaction.response.defer(thinking=True)
 
         seed = self.bot.hivemind_sentence(max_overlap_ratio=0.65)
-        answer, usage = await self._complete(HIVEMIND_SYSTEM_PROMPT, seed)
+        resp = await self._ask(HIVEMIND_SYSTEM_PROMPT, seed, effort=EFFORT_SIMPLE)
 
         # Erst den Hivemind-Satz posten, dann die Antwort darauf
         await interaction.followup.send(seed, allowed_mentions=NO_MENTIONS)
         await self._send_answer(
-            interaction, title="Antwort (Hivemind)", prompt=seed, answer=answer or "—", cost=format_cost(usage)
+            interaction, title="Antwort (Hivemind)", prompt=seed, answer=resp.output_text.strip() or "—",
+            cost=format_cost(resp.usage),
         )
         self.log("HMChat sent", interaction)
 
@@ -281,7 +282,7 @@ class Chat(BaseCog):
         """Baut aus kurzem Input einen präzisen englischen Bildprompt und generiert ein HD-NSFW-Bild."""
         await interaction.response.defer(thinking=True)
 
-        optimized_prompt, _ = await self._complete(IMAGE_PROMPT_OPTIMIZER, text)
+        optimized_prompt = (await self._ask(IMAGE_PROMPT_OPTIMIZER, text, effort=EFFORT_SIMPLE)).output_text.strip()
         if not optimized_prompt:
             raise UserError(
                 "Konnte keinen gültigen Bild-Prompt bauen. Versuch es bitte nochmal mit einer anderen Beschreibung."
@@ -323,6 +324,8 @@ class Chat(BaseCog):
     @app_commands.choices(voice=[app_commands.Choice(name=v, value=v) for v in TTS_VOICES])
     @allowed_channels
     async def tts(self, interaction: discord.Interaction, text: str, voice: str = "onyx"):
+        if len(text) > TTS_MAX_CHARS:
+            raise UserError(f"❌ Zu lang: maximal {TTS_MAX_CHARS} Zeichen.")
         await interaction.response.defer(thinking=True)
 
         speech = await self.oai.audio.speech.create(model=TTS_MODEL, voice=voice, input=text)
