@@ -76,6 +76,7 @@ AVATAR_ID_RE = re.compile(r"/avatars/(\d+)/")
 CUSTOM_EMOJI_RE = re.compile(r"<a?:(\w+):\d+>")
 USER_MENTION_RE = re.compile(r"<@[!&]?\d+>")
 CHANNEL_MENTION_RE = re.compile(r"<#\d+>")
+MENTION_ID_RE = re.compile(r"<(@[!&]?|#)(\d+)>")
 FOOTER_CHANNEL_RE = re.compile(r"\|\s*#(.+)$")
 
 # Zeichen, die die Diagramm-Schrift darstellen kann (Rest wäre Tofu □)
@@ -136,6 +137,23 @@ def md_snippet(post: StarPost, max_len: int) -> str:
         return "🖼️ *Bild/Video*" if post.image_url is not None else "📎 *Anhang*"
     text = discord.utils.escape_markdown(truncate(text, max_len))
     return f"„{text}“"
+
+
+def plain_text(text: str, guild: discord.Guild | None) -> str:
+    """Discord-Markup für die Textdatei lesbar machen: Mentions → Namen, Custom-Emojis → :name:."""
+
+    def resolve(match: re.Match) -> str:
+        kind, target_id = match.group(1), int(match.group(2))
+        if kind == "#":
+            channel = guild.get_channel(target_id) if guild else None
+            return f"#{channel.name}" if channel else "#channel"
+        if kind == "@&":
+            role = guild.get_role(target_id) if guild else None
+            return f"@{role.name}" if role else "@rolle"
+        member = guild.get_member(target_id) if guild else None
+        return f"@{member.display_name}" if member else "@jemand"
+
+    return MENTION_ID_RE.sub(resolve, CUSTOM_EMOJI_RE.sub(r":\1:", text))
 
 
 def rank_label(i: int) -> str:
@@ -322,6 +340,13 @@ def scope_label(year: int | None) -> str:
     return str(year) if year else "Alle Zeiten"
 
 
+def prime_time(posts: list[StarPost]) -> tuple[int, int]:
+    """Häufigster Wochentag (0 = Montag) und häufigste Stunde."""
+    weekday = Counter(p.created_at.weekday() for p in posts).most_common(1)[0][0]
+    hour = Counter(p.created_at.hour for p in posts).most_common(1)[0][0]
+    return weekday, hour
+
+
 # -------------------- View --------------------
 
 
@@ -330,12 +355,13 @@ class SternbrettView(BaseView):
 
     error_text = "❌ Das Sternbrett hat sich verheddert."
 
-    def __init__(self, cog: "Sternbrett", owner_id: int, years: list[int], year: int | None, tab: str):
+    def __init__(self, cog: "Sternbrett", owner_id: int, years: list[int], year: int | None, tab: str, private: bool):
         super().__init__(timeout=VIEW_TIMEOUT)
         self.cog = cog
         self.owner_id = owner_id
         self.year = year
         self.tab = tab
+        self.private = private
         self.message: discord.Message | None = None
 
         self.year_select = discord.ui.Select(
@@ -356,6 +382,10 @@ class SternbrettView(BaseView):
             button.callback = self._tab_callback(key)
             self.tab_buttons[key] = button
             self.add_item(button)
+
+        export_button = discord.ui.Button(label="Export", emoji="📄", style=discord.ButtonStyle.success, row=1)
+        export_button.callback = self.on_export
+        self.add_item(export_button)
         self._sync_components()
 
     def _sync_components(self):
@@ -392,6 +422,13 @@ class SternbrettView(BaseView):
         embeds, file = await self.cog.build_page(interaction.guild, self.tab, self.year)
         await interaction.edit_original_response(embeds=embeds, attachments=[file], view=self)
         self.cog.log("Sternbrett page", interaction, tab=self.tab, year=self.year)
+
+    async def on_export(self, interaction: discord.Interaction):
+        """Alle Ansichten fürs gewählte Jahr als Textdatei (so sichtbar wie die Ursprungsnachricht)."""
+        await interaction.response.defer(thinking=True, ephemeral=self.private)
+        file = self.cog.build_export(interaction.guild, self.year)
+        await interaction.followup.send(file=file, ephemeral=self.private, allowed_mentions=NO_MENTIONS)
+        self.cog.log("Sternbrett export", interaction, year=self.year)
 
     async def on_timeout(self):
         if self.message:
@@ -758,8 +795,7 @@ class Sternbrett(BaseCog):
             )
         embed.add_field(name="👥 Leute", value=f"**{fmt_int(len({p.author_key for p in posts}))}**", inline=True)
 
-        weekday = Counter(p.created_at.weekday() for p in posts).most_common(1)[0][0]
-        hour = Counter(p.created_at.hour for p in posts).most_common(1)[0][0]
+        weekday, hour = prime_time(posts)
         embed.add_field(name="🕒 Prime Time", value=f"**{WEEKDAYS[weekday]}s**\n{hour}–{hour + 1} Uhr", inline=True)
 
         channels = Counter(p.channel_id for p in posts).most_common(5)
@@ -793,6 +829,100 @@ class Sternbrett(BaseCog):
                 f"{fmt_int(len(posts))} Posts · {fmt_int(total_stars)} Sterne", MONTHS, values, muted,
             )
         return [embed], chart
+
+    # -------------------- Export --------------------
+
+    def build_export(self, guild: discord.Guild | None, year: int | None) -> discord.File:
+        """Alle drei Ansichten als Textdatei – ohne Embed-Limits, also mit vollem Text und allen Leuten."""
+        all_posts = self.load_posts(guild)
+        posts = [p for p in all_posts if year is None or p.created_at.year == year]
+        if not posts:
+            raise UserError(f"🦗 Im Sternbrett gibt es für **{scope_label(year)}** nichts.")
+
+        def channel_name(channel_id: int, fallback: str | None = None) -> str:
+            channel = guild.get_channel(channel_id) if guild else None
+            return f"#{channel.name}" if channel else f"#{fallback or 'unbekannt'}"
+
+        def heading(text: str) -> list[str]:
+            return ["", "", text, "=" * len(text), ""]
+
+        scope = scope_label(year)
+        known = [p for p in posts if p.stars is not None]
+        total_stars = sum(p.stars for p in known)
+        stats = author_stats(posts)
+
+        lines = [
+            f"STERNBRETT-AUSWERTUNG · {scope}",
+            f"Stand: {datetime.now(TZ):%d.%m.%Y %H:%M} Uhr · {fmt_int(len(all_posts))} Sternbrett-Posts ausgewertet",
+        ]
+        pending = self.pending_count()
+        if pending:
+            lines.append(f"Hinweis: {fmt_int(pending)} Posts werden noch geladen, die Zahlen sind noch nicht komplett.")
+
+        # ---------- Überblick ----------
+        lines += heading("📊 ÜBERBLICK")
+        lines.append(f"Posts:       {fmt_int(len(posts))}")
+        lines.append(f"Sterne:      {fmt_int(total_stars)}")
+        if known:
+            record = ranked(known)[0]
+            lines.append(f"Ø pro Post:  {fmt_decimal(total_stars / len(known))} ⭐")
+            lines.append(f"Rekord:      {record.stars} ⭐ von {record.author_name} – {record.jump_url}")
+        lines.append(f"Leute:       {fmt_int(len(stats))}")
+        weekday, hour = prime_time(posts)
+        lines.append(f"Prime Time:  {WEEKDAYS[weekday]}s, {hour}–{hour + 1} Uhr")
+
+        lines += ["", "Sternigste Channels:"]
+        for channel_id, n in Counter(p.channel_id for p in posts).most_common(5):
+            fallback = next(p.channel_name for p in posts if p.channel_id == channel_id)
+            lines.append(f"  {channel_name(channel_id, fallback)}: {fmt_int(n)}")
+
+        if year is None:
+            by_year = Counter(p.created_at.year for p in posts)
+            period_rows = [(str(y), by_year.get(y, 0)) for y in range(min(by_year), max(by_year) + 1)]
+            lines += ["", "Posts pro Jahr:"]
+        else:
+            by_month = Counter(p.created_at.month for p in posts)
+            period_rows = [(MONTHS[m - 1], by_month.get(m, 0)) for m in range(1, 13)]
+            lines += ["", "Posts pro Monat:"]
+        width = max(len(fmt_int(n)) for _, n in period_rows)
+        for label, n in period_rows:
+            lines.append(f"  {label:<5} {fmt_int(n):>{width}}")
+
+        # ---------- Top-Posts ----------
+        top = ranked(posts)[:TOP_N]
+        lines += heading(f"🏆 DIE {len(top)} MEISTGESTERNTEN POSTS")
+        for i, p in enumerate(top, start=1):
+            lines.append(
+                f"{i:>2}. {p.stars} ⭐ · {p.author_name} in {channel_name(p.channel_id, p.channel_name)} "
+                f"· {p.created_at:%d.%m.%Y %H:%M}"
+            )
+            text = plain_text(p.content, guild).strip()
+            if text:
+                lines += [f"    │ {line}" for line in text.splitlines()]
+            if p.image_url is not None:
+                lines.append("    │ [Bild/Video]")
+            elif not text:
+                lines.append("    │ [Anhang]")
+            lines += [f"    └ {p.jump_url}", ""]
+
+        # ---------- Sternsammler ----------
+        lines += heading(f"👑 STERNSAMMLER ({fmt_int(len(stats))} Leute)")
+        name_width = max(len(s.name) for s in stats)
+        for i, s in enumerate(stats, start=1):
+            avg = f" · Ø {fmt_decimal(s.stars / s.posts)}" if s.stars else ""
+            best = f" · Bester: {s.best.stars} ⭐ {s.best.jump_url}" if s.best else ""
+            lines.append(f"{i:>3}. {s.name:<{name_width}}  {fmt_int(s.posts):>5} Posts · {fmt_int(s.stars):>5} ⭐{avg}{best}")
+
+        star_king = max(stats, key=lambda s: s.stars)
+        if star_king.stars:
+            lines += ["", f"Meiste Sterne:          {star_king.name} ({fmt_int(star_king.stars)} ⭐)"]
+        regulars = [s for s in stats if s.posts >= 3 and s.stars]
+        if regulars:
+            best_avg = max(regulars, key=lambda s: s.stars / s.posts)
+            lines.append(f"Bester Schnitt (ab 3):  {best_avg.name} (Ø {fmt_decimal(best_avg.stars / best_avg.posts)} ⭐)")
+
+        filename = f"sternbrett_{year or 'alle_zeiten'}.txt"
+        return discord.File(BytesIO(("\n".join(lines) + "\n").encode("utf-8")), filename=filename)
 
     # -------------------- /sternbrett --------------------
 
@@ -846,7 +976,7 @@ class Sternbrett(BaseCog):
             raise UserError(f"🦗 Im Sternbrett gibt es für **{jahr}** nichts.")
 
         embeds, file = await self.build_page(interaction.guild, ansicht, jahr)
-        view = SternbrettView(self, interaction.user.id, self.known_years(), jahr, ansicht)
+        view = SternbrettView(self, interaction.user.id, self.known_years(), jahr, ansicht, privat)
         view.message = await interaction.followup.send(
             embeds=embeds, file=file, view=view, allowed_mentions=NO_MENTIONS, wait=True
         )
