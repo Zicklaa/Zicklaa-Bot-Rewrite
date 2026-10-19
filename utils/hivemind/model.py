@@ -5,13 +5,15 @@ Aufbau des Modells (siehe ``build``):
   → Ziehen nach Häufigkeit ist ein einziger Index-Lookup (``cum > r``)
 - ``chain3``: dasselbe für 3-Wort-Kontexte, aber nur dort, wo es mehrere Folgewörter
   gibt. Damit klingen die Sätze grammatischer, ohne einfach ein Original nachzuerzählen.
-- Bloom-Filter über alle 5-, 6- und 7-Wort-Folgen der Originale: Sätze, die zu lange
+  Ab wie vielen Folgewörtern der 3er-Kontext genutzt wird, legt der Stil fest.
+- Bloom-Filter über alle 5- bis 9-Wort-Folgen der Originale: Sätze, die zu lange
   wörtlich aus einer einzigen Nachricht stammen, werden verworfen (der Mashup-Teil).
 """
 
 import os
 import random
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -33,9 +35,25 @@ MIN_WORDS = 5  # kürzere Sätze sind selten lustig und fast immer Originale
 MAX_WORDS = 25  # längere Ketten driften ins Unverständliche ab
 TRIES = 200  # Versuche pro Satz (ein Versuch kostet < 1 ms)
 
-# Overlap-Prüfung: Fenstergröße = round(ratio * Satzlänge) + 1, begrenzt auf die im
-# Bloom-Filter gespeicherten Längen
-OVERLAP_NGRAMS = (5, 6, 7)
+# Overlap-Prüfung: Fenstergröße = round(ratio * Satzlänge) + 1 (+ Bonus des Stils),
+# begrenzt auf die im Bloom-Filter gespeicherten Längen
+OVERLAP_NGRAMS = (5, 6, 7, 8, 9)
+
+
+@dataclass(frozen=True)
+class Style:
+    label: str
+    order3_min_branches: int | None  # None = nur 2er-Kontext (wie das alte markovify)
+    overlap_bonus: int  # so viele Wörter mehr am Stück darf ein Satz aus einem Original haben
+
+
+# Gewichtung: wie stark die Kette auf Grammatik statt auf Zufall setzt
+STYLES = {
+    "chaos": Style("🌀 Chaos – wilder Wortsalat", None, 0),
+    "ausgewogen": Style("⚖️ Ausgewogen – lustig, aber meist sinnvoll", 3, 0),
+    "eloquent": Style("🎓 Eloquent – fast schon richtige Sätze", 2, 2),
+}
+DEFAULT_STYLE = "ausgewogen"
 
 # -------------------- Hashing (identisch in build.py, dort mit numpy) --------------------
 
@@ -87,8 +105,11 @@ class HivemindModel:
         self.meta = dict(self.db.execute("SELECT key, value FROM meta"))
         (blob,) = self.db.execute("SELECT data FROM bloom").fetchone()
         self.bloom = Bloom(blob, int(self.meta["bloom_bits"]), int(self.meta["bloom_hashes"]))
+        # Fenstergrößen, die beim Bauen wirklich im Filter gelandet sind
+        ngrams = [int(n) for n in str(self.meta.get("overlap_ngrams", "5,6,7")).split(",")]
+        self.min_n, self.max_n = min(ngrams), max(ngrams)
         self._totals2: dict[int, int] = {}
-        self._totals3: dict[tuple[int, int], int] = {}
+        self._totals3: dict[tuple[int, int], tuple[int, int]] = {}
         self._words: dict[int, str] = {}
 
     def close(self):
@@ -103,23 +124,23 @@ class HivemindModel:
             total = self._totals2[s] = row[0] if row else 0
         return total
 
-    def _total3(self, w0: int, s: int) -> int:
+    def _total3(self, w0: int, s: int) -> tuple[int, int]:
+        """(Gesamtgewicht, Anzahl verschiedener Folgewörter) eines 3er-Kontexts."""
         key = (w0, s)
-        total = self._totals3.get(key)
-        if total is None:
+        cached = self._totals3.get(key)
+        if cached is None:
             if len(self._totals3) > 500_000:
                 self._totals3.clear()
-            row = self.db.execute(
-                "SELECT cum FROM chain3 WHERE w0 = ? AND s = ? ORDER BY cum DESC LIMIT 1", (w0, s)
+            cached = self._totals3[key] = self.db.execute(
+                "SELECT coalesce(max(cum), 0), count(*) FROM chain3 WHERE w0 = ? AND s = ?", (w0, s)
             ).fetchone()
-            total = self._totals3[key] = row[0] if row else 0
-        return total
+        return cached
 
-    def _next(self, w0: int, w1: int, w2: int) -> int:
-        """Zieht das Folgewort: 3er-Kontext, wo er sich verzweigt, sonst 2er-Kontext."""
+    def _next(self, w0: int, w1: int, w2: int, min_branches: int | None) -> int:
+        """Zieht das Folgewort: 3er-Kontext, wo er sich genug verzweigt, sonst 2er-Kontext."""
         s = (w1 << 32) | w2
-        total = self._total3(w0, s)
-        if total:
+        total, branches = self._total3(w0, s) if min_branches else (0, 0)
+        if total and branches >= min_branches:
             return self.db.execute(
                 "SELECT next FROM chain3 WHERE w0 = ? AND s = ? AND cum > ? ORDER BY cum LIMIT 1",
                 (w0, s, random.randrange(total)),
@@ -131,21 +152,22 @@ class HivemindModel:
             (s, random.randrange(self._total2(s))),
         ).fetchone()[0]
 
-    def _walk(self) -> list[int] | None:
+    def _walk(self, style: Style) -> list[int] | None:
         """Ein zufälliger Satz als Wort-IDs (None = zu lang geworden)."""
         w0 = w1 = w2 = BEGIN
         ids = []
         for _ in range(MAX_WORDS + 1):
-            nxt = self._next(w0, w1, w2)
+            nxt = self._next(w0, w1, w2, style.order3_min_branches)
             if nxt == END:
                 return ids
             ids.append(nxt)
             w0, w1, w2 = w1, w2, nxt
         return None
 
-    def _is_original(self, ids: list[int], max_overlap_ratio: float) -> bool:
+    def _is_original(self, ids: list[int], max_overlap_ratio: float, style: Style) -> bool:
         """True, wenn eine zu lange Wortfolge wörtlich aus einer Nachricht stammt."""
-        n = min(max(round(max_overlap_ratio * len(ids)) + 1, OVERLAP_NGRAMS[0]), OVERLAP_NGRAMS[-1])
+        n = round(max_overlap_ratio * len(ids)) + 1 + style.overlap_bonus
+        n = min(max(n, self.min_n), self.max_n)
         return any(ids[i : i + n] in self.bloom for i in range(len(ids) - n + 1))
 
     def _text(self, ids: list[int]) -> str:
@@ -157,11 +179,12 @@ class HivemindModel:
             self._words.update(self.db.execute(f"SELECT id, word FROM vocab WHERE id IN ({placeholders})", missing))
         return " ".join(self._words[i] for i in ids)
 
-    def sentence(self, max_overlap_ratio: float = 0.6) -> str | None:
+    def sentence(self, max_overlap_ratio: float = 0.6, style: str = DEFAULT_STYLE) -> str | None:
         """Ein neuer Satz, der kein (Fast-)Original ist – oder None nach ``TRIES`` Fehlversuchen."""
+        chosen = STYLES[style]
         for _ in range(TRIES):
-            ids = self._walk()
-            if ids is not None and len(ids) >= MIN_WORDS and not self._is_original(ids, max_overlap_ratio):
+            ids = self._walk(chosen)
+            if ids is not None and len(ids) >= MIN_WORDS and not self._is_original(ids, max_overlap_ratio, chosen):
                 return self._text(ids)
         return None
 

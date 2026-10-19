@@ -229,15 +229,16 @@ class Scraper:
     async def _fetch(self, job: Job):
         job.state = "running"
         job.started_at = time.monotonic()
-        rows: list[tuple] = []
+        rows: list[tuple[str]] = []
         last_id = job.last_id
         try:
             async for message in job.channel.history(limit=None, after=discord.Object(id=job.last_id), oldest_first=True):
                 job.fetched += 1
                 job.cur_ts = message.created_at.timestamp()
                 last_id = message.id
+                # Autor/Typ werden nur zum Filtern angeschaut – gespeichert wird allein der Text
                 if message.content and not message.author.bot and message.type in KEEP_TYPES:
-                    rows.append((message.id, job.channel.id, message.author.id, message.content))
+                    rows.append((message.content,))
                 if job.fetched % 100 == 0:
                     self._save(job, rows, last_id)
                     rows = []
@@ -252,10 +253,11 @@ class Scraper:
             # Alles bis last_id ist verarbeitet → auch beim Abbruch konsistent speicherbar
             self._save(job, rows, last_id)
 
-    def _save(self, job: Job, rows: list[tuple], last_id: int):
+    def _save(self, job: Job, rows: list[tuple[str]], last_id: int):
         if not rows and last_id <= job.last_id:
             return
-        self.db.executemany("INSERT OR IGNORE INTO messages(id, channel_id, author_id, content) VALUES (?, ?, ?, ?)", rows)
+        # Texte und Fortschritt in einer Transaktion → nach einem Absturz nichts doppelt, nichts fehlt
+        added = self.db.executemany("INSERT OR IGNORE INTO messages(content) VALUES (?)", rows).rowcount
         self.db.execute(
             """
             INSERT INTO channels(id, name, last_id, messages, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -265,8 +267,8 @@ class Scraper:
                 messages = channels.messages + excluded.messages,
                 updated_at = excluded.updated_at
             """,
-            (job.channel.id, job.name, last_id, len(rows), int(time.time())),
+            (job.channel.id, job.name, last_id, added, int(time.time())),
         )
         self.db.commit()
-        self.stored += len(rows)
+        self.stored += added
         job.last_id = max(job.last_id, last_id)

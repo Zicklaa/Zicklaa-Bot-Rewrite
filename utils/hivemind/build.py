@@ -34,7 +34,8 @@ from utils.settings import STATIC_DIR
 # 3er-Kontext nur speichern, wenn er mindestens so viele verschiedene Folgewörter hat.
 # Kontexte mit nur einem Folgewort würden einfach das Original weitererzählen –
 # dort springt die Kette auf den 2er-Kontext zurück und mischt Nachrichten.
-ORDER3_MIN_BRANCHES = 3
+# Muss <= der kleinsten Schwelle in model.STYLES sein (die Stile filtern zur Laufzeit weiter).
+ORDER3_MIN_BRANCHES = 2
 
 # Zielfehlerrate des Bloom-Filters (falsch-positive "ist ein Original")
 BLOOM_FP_RATE = 0.01
@@ -350,6 +351,7 @@ def main():
         "order3_min_branches": args.order3_min_branches,
         "bloom_bits": bloom_bits,
         "bloom_hashes": bloom_hashes,
+        "overlap_ngrams": ",".join(map(str, OVERLAP_NGRAMS)),
     }
     write_model(args.out, words, chain2, chain3, bloom, meta)
     stats["seconds"] = round(time.time() - started)

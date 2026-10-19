@@ -18,7 +18,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-from utils.hivemind.model import MODEL_DB, HivemindModel, install_model
+from utils.hivemind.model import DEFAULT_STYLE, MODEL_DB, HivemindModel, install_model
 from utils.logging_helper import LOGGER_NAME, log_event
 from utils.settings import BASE_DIR, DB_FILE, GUILD_IDS, LOG_FILE
 
@@ -95,12 +95,15 @@ class ZicklaaBotRewrite(commands.Bot):
         log_event(logger, logging.INFO, "Bot", "hivemind_loaded", vocab=model.meta.get("vocab"))
         return model
 
-    async def hivemind_sentence(self, max_overlap_ratio: float = 0.6) -> str | None:
-        """Ein zufälliger Hivemind-Satz (None, wenn kein Modell da ist oder nichts Neues herauskam)."""
+    async def hivemind_sentence(self, max_overlap_ratio: float = 0.6, style: str = DEFAULT_STYLE) -> str | None:
+        """Ein zufälliger Hivemind-Satz (None, wenn kein Modell da ist oder nichts Neues herauskam).
+
+        ``style`` ist ein Schlüssel aus ``utils.hivemind.model.STYLES``.
+        """
 
         def generate():
             with self._hivemind_lock:
-                return self.hivemind.sentence(max_overlap_ratio) if self.hivemind else None
+                return self.hivemind.sentence(max_overlap_ratio, style) if self.hivemind else None
 
         return await asyncio.to_thread(generate)
 

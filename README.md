@@ -116,8 +116,10 @@ python bot.py
 - `/tts <text> [voice]` – Text‑to‑Speech.
 
 ### Hivemind
-- `/hm` – ein Satz aus dem Markov‑Modell.
-- `/hmm` – fünf Sätze (nur im Spam‑Channel).
+- `/hm [stil]` – ein Satz aus dem Markov‑Modell. Stile: 🌀 Chaos (wilder
+  Wortsalat), ⚖️ Ausgewogen (Standard), 🎓 Eloquent (fast richtige Sätze).
+  Alle anderen Stellen (`/hmchat`, Reminder ohne Text) nutzen „Ausgewogen“.
+- `/hmm [stil]` – fünf Sätze (nur im Spam‑Channel).
 - `/hivemind rebuild [modus]` – lädt alle neuen Nachrichten des Servers und baut
   das Modell neu, mit Live‑Fortschritt und Abbrechen‑Button (nur Admin). Der
   erste Lauf lädt die komplette History (dauert Stunden, Discord erlaubt pro
@@ -125,6 +127,9 @@ python bot.py
   jederzeit möglich, der nächste Lauf macht genau dort weiter.
   - Daten: `static/hivemind/corpus.db` (Nachrichten), `model.db` (aktives
     Modell), `archiv/` (die letzten 3 ersetzten Modelle).
+  - Datenschutz: Pro Nachricht wird nur der Text gespeichert – kein Autor,
+    Channel, Zeitpunkt oder Message‑ID; gleiche Texte nur einmal. Pro Channel
+    merkt sich der Bot lediglich, bis wohin er geladen hat.
 
 ### Spiele & Spaß
 - `/discordle` & `/bildcordle` – Wer schrieb die Nachricht / welches Bild?

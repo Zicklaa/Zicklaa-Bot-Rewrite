@@ -14,7 +14,7 @@ from discord.ext import commands
 from utils.base import BaseCog, BaseView, UserError, in_channels, owner_only
 from utils.helpers import NO_MENTIONS, truncate
 from utils.hivemind.corpus import open_corpus
-from utils.hivemind.model import CORPUS_DB, HIVEMIND_DIR
+from utils.hivemind.model import CORPUS_DB, DEFAULT_STYLE, HIVEMIND_DIR, STYLES
 from utils.hivemind.scrape import Scraper
 from utils.settings import BASE_DIR, GUILD_IDS, OWNER_ID, SPAM_CHANNEL_ID
 
@@ -47,6 +47,9 @@ BUILD_STEPS = {
 }
 STATE_ICONS = {"wait": "⏸️", "run": "⏳", "done": "✅", "skip": "➖", "fail": "❌", "cancel": "⏹️"}
 COLOR_RUNNING, COLOR_DONE, COLOR_FAILED, COLOR_CANCELLED = 0x5865F2, 0x57F287, 0xED4245, 0x95A5A6
+
+STYLE_CHOICES = [app_commands.Choice(name=style.label, value=key) for key, style in STYLES.items()]
+STYLE_DESCRIBE = "Wie wild darf's werden? (Standard: Ausgewogen)"
 
 # -------------------- Formatierung --------------------
 
@@ -364,30 +367,34 @@ class Hivemind(BaseCog):
         if self.current and self.current.task:
             self.current.task.cancel()
 
-    async def _sentence(self) -> str:
-        sentence = await self.bot.hivemind_sentence()
+    async def _sentence(self, style: str = DEFAULT_STYLE) -> str:
+        sentence = await self.bot.hivemind_sentence(style=style)
         if not sentence:
             raise UserError(UNAVAILABLE)
         return sentence
 
     @app_commands.command(name="hm", description="Generiert einen zufälligen Satz aus dem Hivemind.")
-    async def hm(self, interaction: discord.Interaction):
-        await interaction.response.send_message(await self._sentence(), allowed_mentions=NO_MENTIONS)
-        self.log("Sentence sent", interaction)
+    @app_commands.describe(stil=STYLE_DESCRIBE)
+    @app_commands.choices(stil=STYLE_CHOICES)
+    async def hm(self, interaction: discord.Interaction, stil: str = DEFAULT_STYLE):
+        await interaction.response.send_message(await self._sentence(stil), allowed_mentions=NO_MENTIONS)
+        self.log("Sentence sent", interaction, style=stil)
 
     @app_commands.command(name="hmm", description="Generiert 5 zufällige Sätze (nur im Spam-Channel).")
+    @app_commands.describe(stil=STYLE_DESCRIBE)
+    @app_commands.choices(stil=STYLE_CHOICES)
     @in_channels(SPAM_CHANNEL_ID)
-    async def hmm(self, interaction: discord.Interaction):
+    async def hmm(self, interaction: discord.Interaction, stil: str = DEFAULT_STYLE):
         # Die Sätze kommen als eigene Nachrichten; die "denkt nach"-Antwort wird danach gelöscht
         await interaction.response.defer(thinking=True)
         for _ in range(5):
-            await interaction.channel.send(await self._sentence(), allowed_mentions=NO_MENTIONS)
+            await interaction.channel.send(await self._sentence(stil), allowed_mentions=NO_MENTIONS)
 
         try:
             await interaction.delete_original_response()
         except discord.HTTPException:
             pass
-        self.log("HMM executed", interaction)
+        self.log("HMM executed", interaction, style=stil)
 
     # ---------- /hivemind rebuild ----------
 
