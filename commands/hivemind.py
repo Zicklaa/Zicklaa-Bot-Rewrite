@@ -79,6 +79,15 @@ def pct(fraction: float) -> str:
     return f"{min(int(fraction * 100), 99)} %"
 
 
+def count_corpus() -> int:
+    """Anzahl gespeicherter Nachrichtentexte (eigene Verbindung → läuft im Worker-Thread)."""
+    db = open_corpus(CORPUS_DB)
+    try:
+        return db.execute("SELECT count(*) FROM messages").fetchone()[0]
+    finally:
+        db.close()
+
+
 # -------------------- Rebuild-Lauf --------------------
 
 
@@ -97,6 +106,10 @@ class RebuildRun:
         self.result: dict | None = None
         self.archived: list = []
         self.samples: list[str] = []
+        # Vorher-Stand für die Bilanz am Ende
+        self.corpus_before: int | None = None
+        model = cog.bot.hivemind
+        self.lines_before: int | None = int(model.meta["lines"]) if model else None
         self.error: str | None = None
         self.started = time.time()
         self.finished: float | None = None
@@ -112,6 +125,7 @@ class RebuildRun:
     async def run(self):
         phase = None
         try:
+            self.corpus_before = await asyncio.to_thread(count_corpus)
             if self.mode == "update":
                 corpus = open_corpus(CORPUS_DB)
                 try:
@@ -278,6 +292,24 @@ class RebuildRun:
                 return "Neues Hivemind ist aktiv." + (f"\nArchiviert: {archived}" if archived else "")
         return "–" if state != "fail" else "Fehlgeschlagen"
 
+    def _balance(self) -> str:
+        """Vorher/Nachher-Vergleich als Sanity-Check."""
+        r = self.result
+        lines = [
+            f"Nachrichten im Korpus: {fmt_int(self.corpus_before)} → **{fmt_int(r['messages'])}** "
+            f"(**+{fmt_int(r['messages'] - self.corpus_before)}**)",
+            f"Dazu Altbestand aus den Dumps 2022/2024: {fmt_int(r['legacy_lines'])} Zeilen",
+        ]
+        if self.lines_before is not None:
+            diff = r["lines"] - self.lines_before
+            lines.append(
+                f"Hivemind kennt jetzt **{fmt_int(r['lines'])}** verschiedene Zeilen "
+                f"(vorher {fmt_int(self.lines_before)}, {'+' if diff >= 0 else '−'}{fmt_int(abs(diff))})"
+            )
+        else:
+            lines.append(f"Hivemind kennt jetzt **{fmt_int(r['lines'])}** verschiedene Zeilen")
+        return "\n".join(lines)
+
     def embed(self) -> discord.Embed:
         duration = fmt_duration((self.finished or time.time()) - self.started)
         cancelled = "cancel" in self.states.values()
@@ -310,6 +342,8 @@ class RebuildRun:
                 value=truncate(self._phase_text(phase), 1024),
                 inline=False,
             )
+        if self.result and self.corpus_before is not None:
+            embed.add_field(name="📊 Bilanz", value=self._balance(), inline=False)
         if self.samples:
             embed.add_field(
                 name="🎲 Kostprobe",
