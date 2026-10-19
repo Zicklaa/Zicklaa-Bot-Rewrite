@@ -38,8 +38,7 @@ PHASE_WEIGHTS = {
 }
 # Schritte von utils.hivemind.build: Phase -> (Label, Anteil am Bauen)
 BUILD_STEPS = {
-    "legacy": ("Altbestand übernehmen", 0.05),
-    "lines": ("Zeilen sammeln & Duplikate entfernen", 0.15),
+    "lines": ("Zeilen sammeln & Duplikate entfernen", 0.20),
     "tokens": ("Wörter erfassen", 0.15),
     "chain": ("Markov-Kette berechnen", 0.25),
     "bloom": ("Original-Filter bauen", 0.15),

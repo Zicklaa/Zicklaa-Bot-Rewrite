@@ -25,7 +25,6 @@ HIVEMIND_DIR = STATIC_DIR / "hivemind"
 CORPUS_DB = HIVEMIND_DIR / "corpus.db"  # gesammelte Nachrichten (wächst inkrementell)
 MODEL_DB = HIVEMIND_DIR / "model.db"  # aktives Modell
 ARCHIVE_DIR = HIVEMIND_DIR / "archiv"  # ersetzte Modelle
-LEGACY_JSON = STATIC_DIR / "hivemind.json"  # altes markovify-Modell, wird beim ersten Rebuild archiviert
 ARCHIVE_KEEP = 3  # so viele alte Modelle bleiben im Archiv (je ~300–500 MB)
 
 # -------------------- Satz-Parameter --------------------
@@ -106,7 +105,7 @@ class HivemindModel:
         (blob,) = self.db.execute("SELECT data FROM bloom").fetchone()
         self.bloom = Bloom(blob, int(self.meta["bloom_bits"]), int(self.meta["bloom_hashes"]))
         # Fenstergrößen, die beim Bauen wirklich im Filter gelandet sind
-        ngrams = [int(n) for n in str(self.meta.get("overlap_ngrams", "5,6,7")).split(",")]
+        ngrams = [int(n) for n in str(self.meta["overlap_ngrams"]).split(",")]
         self.min_n, self.max_n = min(ngrams), max(ngrams)
         self._totals2: dict[int, int] = {}
         self._totals3: dict[tuple[int, int], tuple[int, int]] = {}
@@ -193,7 +192,7 @@ class HivemindModel:
 
 
 def install_model(build_path: Path) -> list[Path]:
-    """Neues Modell aktivieren: bisheriges Modell (und die alte markovify-JSON) ins Archiv.
+    """Neues Modell aktivieren: bisheriges Modell ins Archiv.
 
     Das aktive Modell muss vorher geschlossen sein. Gibt die archivierten Dateien zurück.
     """
@@ -202,8 +201,6 @@ def install_model(build_path: Path) -> list[Path]:
     if MODEL_DB.exists():
         stamp = datetime.fromtimestamp(MODEL_DB.stat().st_mtime).strftime("%Y-%m-%d_%H-%M-%S")
         archived.append(MODEL_DB.rename(ARCHIVE_DIR / f"model_{stamp}.db"))
-    if LEGACY_JSON.exists():
-        archived.append(LEGACY_JSON.rename(ARCHIVE_DIR / "hivemind_markovify_2024-05-20.json"))
     os.replace(build_path, MODEL_DB)
     for old in sorted(ARCHIVE_DIR.glob("model_*.db"))[:-ARCHIVE_KEEP]:
         old.unlink()

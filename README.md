@@ -126,7 +126,9 @@ python bot.py
   Channel nur ~100 Nachrichten/s), danach nur noch Neues. Abbrechen ist
   jederzeit möglich, der nächste Lauf macht genau dort weiter.
   - Daten: `static/hivemind/corpus.db` (Nachrichten), `model.db` (aktives
-    Modell), `archiv/` (die letzten 3 ersetzten Modelle).
+    Modell), `archiv/` (die letzten 3 ersetzten Modelle + Backup der Text‑Dumps
+    des alten Bots als `hivemind_dumps_2022-2024.tar.xz`; deren Inhalt steckt
+    bereits als Altbestand in `corpus.db`).
   - Datenschutz: Pro Nachricht wird nur der Text gespeichert – kein Autor,
     Channel, Zeitpunkt oder Message‑ID; gleiche Texte nur einmal. Pro Channel
     merkt sich der Bot lediglich, bis wohin er geladen hat.

@@ -7,10 +7,10 @@ Schreibt Fortschritt als JSON-Zeilen auf stdout: {"phase": …, "done": …, "to
 am Ende {"result": {...}}.
 
 Ablauf:
-1. Altbestand (die Text-Dumps von 2022 und 2024) einmalig in den Korpus übernehmen
-2. Alle Zeilen sammeln, filtern, Duplikate entfernen
-3. Wörter → IDs, n-Gramme zählen (numpy), kumulierte Gewichte berechnen
-4. Ketten, Vokabular und Bloom-Filter sortiert in eine frische SQLite-Datei schreiben
+1. Alle Zeilen sammeln (Altbestand aus den Dumps 2022/2024 + geladene Nachrichten),
+   filtern, Duplikate entfernen
+2. Wörter → IDs, n-Gramme zählen (numpy), kumulierte Gewichte berechnen
+3. Ketten, Vokabular und Bloom-Filter sortiert in eine frische SQLite-Datei schreiben
 """
 
 import argparse
@@ -29,7 +29,6 @@ from utils.hivemind.model import (
     BEGIN, CORPUS_DB, END, FNV_PRIME, GOLDEN, OVERLAP_NGRAMS, SALT,
 )
 from utils.hivemind.corpus import open_corpus
-from utils.settings import STATIC_DIR
 
 # 3er-Kontext nur speichern, wenn er mindestens so viele verschiedene Folgewörter hat.
 # Kontexte mit nur einem Folgewort würden einfach das Original weitererzählen –
@@ -39,10 +38,6 @@ ORDER3_MIN_BRANCHES = 2
 
 # Zielfehlerrate des Bloom-Filters (falsch-positive "ist ein Original")
 BLOOM_FP_RATE = 0.01
-
-# Text-Dumps des alten Bots (Channel-weise, schon gefiltert; merged_file.txt = deren Summe)
-LEGACY_GLOBS = ("25-07-2022/hivemind_*.txt", "20-05-2024/hivemind_*.txt")
-LEGACY_EXCLUDE = ("merged",)
 
 # Wie bisher: Bot-Commands, Links und Nachrichten, die mit Emoji/Mention beginnen, fliegen raus
 SKIP_PREFIXES = ("<", "http", "+", "$", ".", "!", "?")
@@ -58,32 +53,7 @@ def keep_message(content: str) -> bool:
     return bool(content) and not content.startswith(SKIP_PREFIXES)
 
 
-# -------------------- 1. Altbestand --------------------
-
-
-def import_legacy(corpus: sqlite3.Connection):
-    if corpus.execute("SELECT 1 FROM meta WHERE key = 'legacy_imported'").fetchone():
-        return
-    files = sorted(
-        p for pattern in LEGACY_GLOBS for p in STATIC_DIR.glob(pattern)
-        if not any(x in p.name for x in LEGACY_EXCLUDE)
-    )
-    raw = 0
-    for i, path in enumerate(files):
-        progress("legacy", i, len(files))
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = [(" ".join(line.split()),) for line in f if not line.isspace()]
-        raw += len(lines)
-        corpus.executemany("INSERT OR IGNORE INTO legacy_lines(text) VALUES (?)", lines)
-    # Rohzahl merken: legacy_lines selbst ist schon ohne Duplikate
-    corpus.executemany(
-        "INSERT INTO meta(key, value) VALUES (?, ?)", [("legacy_imported", len(files)), ("legacy_raw_lines", raw)]
-    )
-    corpus.commit()
-    progress("legacy", len(files), len(files))
-
-
-# -------------------- 2. Zeilen --------------------
+# -------------------- 1. Zeilen --------------------
 
 
 def collect_lines(corpus: sqlite3.Connection) -> tuple[list[str], dict]:
@@ -125,7 +95,7 @@ def collect_lines(corpus: sqlite3.Connection) -> tuple[list[str], dict]:
             progress("lines", done, total)
 
     progress("lines", total, total)
-    # Duplikate innerhalb des Altbestands wurden schon beim Import verworfen → mitzählen
+    # Altbestand (Tabelle legacy_lines) ist schon ohne Duplikate; die Rohzahl steht in meta
     row = corpus.execute("SELECT value FROM meta WHERE key = 'legacy_raw_lines'").fetchone()
     legacy_unique = corpus.execute("SELECT count(*) FROM legacy_lines").fetchone()[0]
     raw_lines += max((row[0] if row else legacy_unique) - legacy_unique, 0)
@@ -133,7 +103,7 @@ def collect_lines(corpus: sqlite3.Connection) -> tuple[list[str], dict]:
     return lines, stats
 
 
-# -------------------- 3. Zählen --------------------
+# -------------------- 2. Zählen --------------------
 
 
 def tokenize(lines: list[str]) -> tuple[np.ndarray, np.ndarray, list[str]]:
@@ -272,7 +242,7 @@ def build_bloom(seq: np.ndarray) -> tuple[bytes, int, int, int]:
     return data.tobytes(), bits, hashes, items
 
 
-# -------------------- 4. Schreiben --------------------
+# -------------------- 3. Schreiben --------------------
 
 
 def write_model(out: Path, words: list[str], chain2, chain3, bloom, meta: dict):
@@ -314,7 +284,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--corpus", type=Path, default=CORPUS_DB)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--order3-min-branches", type=int, default=ORDER3_MIN_BRANCHES)
     args = parser.parse_args()
 
     # Bot läuft parallel weiter → niedrigere CPU-Priorität
@@ -322,7 +291,6 @@ def main():
     started = time.time()
 
     corpus = open_corpus(args.corpus)
-    import_legacy(corpus)
     lines, stats = collect_lines(corpus)
     stats["legacy_lines"] = corpus.execute("SELECT count(*) FROM legacy_lines").fetchone()[0]
     stats["channels"] = corpus.execute("SELECT count(*) FROM channels WHERE last_id > 0").fetchone()[0]
@@ -334,7 +302,7 @@ def main():
     del lines
     seq, targets = build_sequence(flat, lengths)
     del flat
-    chain2, chain3 = chain_rows(seq, targets, args.order3_min_branches)
+    chain2, chain3 = chain_rows(seq, targets, ORDER3_MIN_BRANCHES)
     del targets
     bloom, bloom_bits, bloom_hashes, bloom_items = build_bloom(seq)
     del seq
@@ -348,7 +316,7 @@ def main():
     }
     meta = stats | {
         "built_at": int(time.time()),
-        "order3_min_branches": args.order3_min_branches,
+        "order3_min_branches": ORDER3_MIN_BRANCHES,
         "bloom_bits": bloom_bits,
         "bloom_hashes": bloom_hashes,
         "overlap_ngrams": ",".join(map(str, OVERLAP_NGRAMS)),
