@@ -167,3 +167,4 @@ vibecheck.py
 *.mov
 *.mp4
 get-pip.py.1
+static/hivemind/

@@ -313,7 +313,7 @@ class RemindMe(BaseCog):
         self.delete_reminder(reminder)
 
         # Ohne Text gibt es eine Hivemind-Weisheit
-        text = reminder.text or self.bot.hivemind_sentence(max_overlap_ratio=0.67)
+        text = reminder.text or await self.bot.hivemind_sentence(max_overlap_ratio=0.67) or "…"
         content = f"⏰ <@{reminder.user_id}> \nIch werde dich wissen lassen:\n**{text}**"
 
         try:

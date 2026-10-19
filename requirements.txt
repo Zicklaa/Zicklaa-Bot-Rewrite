@@ -26,7 +26,6 @@ idna==3.10
 jiter==0.10.0
 kiwisolver==1.5.1
 lyricsgenius==3.7.1
-markovify==0.9.4
 matplotlib==3.11.2
 multidict==6.6.4
 numpy==2.5.4

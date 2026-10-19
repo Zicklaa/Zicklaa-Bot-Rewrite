@@ -259,7 +259,9 @@ class Chat(BaseCog):
         """Lässt ChatGPT auf einen zufälligen Hivemind-Satz antworten."""
         await interaction.response.defer(thinking=True)
 
-        seed = self.bot.hivemind_sentence(max_overlap_ratio=0.65)
+        seed = await self.bot.hivemind_sentence(max_overlap_ratio=0.65)
+        if not seed:
+            raise UserError("🧠 Das Hivemind ist gerade nicht verfügbar.")
         resp = await self._ask(HIVEMIND_SYSTEM_PROMPT, seed, effort=EFFORT_SIMPLE)
 
         # Erst den Hivemind-Satz posten, dann die Antwort darauf

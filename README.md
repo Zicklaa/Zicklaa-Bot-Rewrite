@@ -12,7 +12,7 @@ Konfiguration und den kompletten Funktionsumfang.
 
 ## Architektur
 - **bot.py** – Hauptdatei. Initialisiert Logger, SQLite‑Datenbank
-  (`reminder-wishlist.db`), Markov‑Modell (`static/hivemind.json`) und eine
+  (`reminder-wishlist.db`), Hivemind‑Modell (`static/hivemind/model.db`) und eine
   gemeinsame HTTP‑Session, lädt alle Cogs und registriert die Slash‑Commands
   nur auf den zugelassenen Guilds.
 - **commands/** – Alle Cogs (je eine Datei pro Feature), werden beim Start
@@ -24,6 +24,9 @@ Konfiguration und den kompletten Funktionsumfang.
   - `helpers.py` – Text‑, Zeit‑ und Nachrichten‑Helfer.
   - `parser.py` + `rm_grammar.peg` – Parser für `/remindme at`.
   - `logging_helper.py` – einheitliches Log‑Format.
+  - `hivemind/` – Markov‑Kette aus allen Server‑Nachrichten: `scrape.py` lädt
+    die Nachrichten (fortsetzbar), `build.py` baut daraus das Modell (eigener
+    Prozess), `model.py` erzeugt die Sätze.
 - Der Bot reagiert mit kleiner Wahrscheinlichkeit (`SECRET_PROBABILITY`) auf
   Schlüsselwörter wie „crazy“, „kult“, „gumo“, „danke“ usw.
 - Ein globaler Cooldown verhindert Spam bei Prefix‑Commands.
@@ -115,6 +118,13 @@ python bot.py
 ### Hivemind
 - `/hm` – ein Satz aus dem Markov‑Modell.
 - `/hmm` – fünf Sätze (nur im Spam‑Channel).
+- `/hivemind rebuild [modus]` – lädt alle neuen Nachrichten des Servers und baut
+  das Modell neu, mit Live‑Fortschritt und Abbrechen‑Button (nur Admin). Der
+  erste Lauf lädt die komplette History (dauert Stunden, Discord erlaubt pro
+  Channel nur ~100 Nachrichten/s), danach nur noch Neues. Abbrechen ist
+  jederzeit möglich, der nächste Lauf macht genau dort weiter.
+  - Daten: `static/hivemind/corpus.db` (Nachrichten), `model.db` (aktives
+    Modell), `archiv/` (die letzten 3 ersetzten Modelle).
 
 ### Spiele & Spaß
 - `/discordle` & `/bildcordle` – Wer schrieb die Nachricht / welches Bild?

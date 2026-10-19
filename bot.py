@@ -1,26 +1,26 @@
 """Zicklaa Bot Rewrite – Einstiegspunkt.
 
-Richtet Logging, Datenbank und Markov-Modell ein, lädt alle Cogs aus ``commands/``
+Richtet Logging, Datenbank und Hivemind-Modell ein, lädt alle Cogs aus ``commands/``
 und registriert die Slash-Commands auf den erlaubten Guilds.
 """
 
 import asyncio
-import json
 import logging
 import os
 import random
 import re
 import sqlite3
+import threading
 import time
 from logging.handlers import TimedRotatingFileHandler
 
 import aiohttp
 import discord
-import markovify
 from discord.ext import commands
 
+from utils.hivemind.model import MODEL_DB, HivemindModel, install_model
 from utils.logging_helper import LOGGER_NAME, log_event
-from utils.settings import BASE_DIR, DB_FILE, GUILD_IDS, LOG_FILE, STATIC_DIR
+from utils.settings import BASE_DIR, DB_FILE, GUILD_IDS, LOG_FILE
 
 # -------------------- Konfiguration --------------------
 
@@ -75,7 +75,9 @@ class ZicklaaBotRewrite(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned_or("+"), intents=intents)
         self.db = sqlite3.connect(DB_FILE)
         self.create_tables()
-        self.json_model = self.load_hivemind()
+        # Generieren läuft in Worker-Threads, der Austausch nach einem Rebuild auch → Lock
+        self._hivemind_lock = threading.Lock()
+        self.hivemind = self.load_hivemind()
         # Gemeinsame HTTP-Session für alle Cogs (wird in setup_hook erstellt)
         self.session: aiohttp.ClientSession | None = None
         # user_id -> Zeitpunkt des letzten Prefix-Commands
@@ -84,20 +86,45 @@ class ZicklaaBotRewrite(commands.Bot):
     # ---------- Daten ----------
 
     @staticmethod
-    def load_hivemind() -> markovify.Text:
-        """Lädt das Markov-Modell aus static/hivemind.json."""
-        with open(STATIC_DIR / "hivemind.json", encoding="utf-8") as f:
-            model = markovify.Text.from_json(json.load(f))
-        print("hivemind.json loaded")
+    def load_hivemind() -> HivemindModel | None:
+        """Öffnet das Hivemind-Modell (None, solange noch keins gebaut wurde)."""
+        if not MODEL_DB.exists():
+            log_event(logger, logging.WARNING, "Bot", "hivemind_missing", path=MODEL_DB)
+            return None
+        model = HivemindModel(MODEL_DB)
+        log_event(logger, logging.INFO, "Bot", "hivemind_loaded", vocab=model.meta.get("vocab"))
         return model
 
-    def hivemind_sentence(self, max_overlap_ratio: float = 0.6) -> str:
-        """Liefert einen zufälligen Hivemind-Satz (gibt nach einigen Fehlversuchen auf)."""
-        for _ in range(50):
-            sentence = self.json_model.make_sentence(max_overlap_ratio=max_overlap_ratio)
-            if sentence:
-                return sentence
-        return "…"
+    async def hivemind_sentence(self, max_overlap_ratio: float = 0.6) -> str | None:
+        """Ein zufälliger Hivemind-Satz (None, wenn kein Modell da ist oder nichts Neues herauskam)."""
+
+        def generate():
+            with self._hivemind_lock:
+                return self.hivemind.sentence(max_overlap_ratio) if self.hivemind else None
+
+        return await asyncio.to_thread(generate)
+
+    async def install_hivemind(self, build_path) -> list:
+        """Tauscht das Modell gegen ein frisch gebautes aus; das alte wandert ins Archiv."""
+
+        def swap():
+            # Erst prüfen, dann tauschen – ein kaputter Build darf das laufende Modell nicht ersetzen
+            candidate = HivemindModel(build_path)
+            try:
+                if candidate.sentence() is None:
+                    raise RuntimeError("Neues Modell liefert keine Sätze")
+            finally:
+                candidate.close()
+            with self._hivemind_lock:
+                if self.hivemind:
+                    self.hivemind.close()
+                    self.hivemind = None
+                try:
+                    return install_model(build_path)
+                finally:
+                    self.hivemind = self.load_hivemind()
+
+        return await asyncio.to_thread(swap)
 
     def create_tables(self) -> None:
         """Erstellt notwendige Tabellen in der Datenbank, falls nicht vorhanden."""
@@ -184,6 +211,8 @@ class ZicklaaBotRewrite(commands.Bot):
             await self.session.close()
         await super().close()
         self.db.close()
+        if self.hivemind:
+            self.hivemind.close()
 
 
 # -------------------- Bot-Instanz --------------------
